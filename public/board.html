@@ -8,25 +8,52 @@
 </head>
 <body class="board-page">
   <div class="topbar">
-    <div>
-      <strong>Room:</strong> <span id="roomLabel"></span>
-      |
-      <strong>User:</strong> <span id="userLabel"></span>
-      |
-      <strong>Role:</strong> <span id="roleLabel"></span>
+    <div class="board-meta">
+      <span><strong>Room:</strong> <span id="roomLabel"></span></span>
+      <span><strong>User:</strong> <span id="userLabel"></span></span>
+      <span><strong>Role:</strong> <span id="roleLabel"></span></span>
     </div>
 
-    <div>
-      <button id="splitBtn">Split Board</button>
-      <button id="clearBtn">Clear Board</button>
-      <button id="backBtn">Keluar</button>
+    <div class="top-actions">
+      <button id="undoBtn" type="button">Undo</button>
+      <button id="redoBtn" type="button">Redo</button>
+      <button id="lockBtn" type="button">Lock Board</button>
+      <button id="splitBtn" type="button">Split Board</button>
+      <button id="clearBtn" type="button">Clear Board</button>
+      <button id="backBtn" type="button">Keluar</button>
     </div>
+  </div>
+
+  <div class="toolbar">
+    <button id="penTool" class="tool-btn active" type="button">Pen</button>
+    <button id="eraserTool" class="tool-btn" type="button">Eraser</button>
+
+    <label class="tool-control">
+      Warna
+      <input type="color" id="colorPicker" value="#111827" />
+    </label>
+
+    <label class="tool-control tool-size">
+      Ukuran
+      <input type="range" id="sizeSlider" min="1" max="18" value="3" />
+      <span id="sizeLabel">3</span>
+    </label>
+
+    <span id="statusText" class="status-text">Ready</span>
   </div>
 
   <div class="main-layout">
     <aside class="sidebar">
       <h3>User Aktif</h3>
       <ul id="userList"></ul>
+
+      <div class="hint-box">
+        <strong>Shortcut</strong>
+        <p>P = Pen</p>
+        <p>E = Eraser</p>
+        <p>Ctrl + Z = Undo</p>
+        <p>Ctrl + Y = Redo</p>
+      </div>
     </aside>
 
     <main class="board-area">

@@ -10,14 +10,14 @@ app.use(express.static("public"));
 
 const rooms = {};
 
-function createRoom(roomId) {
+function createRoomIfNotExists(roomId) {
   if (!rooms[roomId]) {
     rooms[roomId] = {
       users: {},
-      strokes: {}, // MAP instead of array
-      history: [], // for undo
-      redoStack: [],
-      splitMode: false
+      splitMode: false,
+      locked: false,
+      strokes: [],
+      redoStack: []
     };
   }
 }
@@ -27,91 +27,224 @@ function getRoomUsers(roomId) {
   return Object.values(rooms[roomId].users);
 }
 
-io.on("connection", (socket) => {
-  console.log("connected", socket.id);
+function isTeacher(socket) {
+  return socket.role === "teacher";
+}
 
-  socket.on("join-room", ({ roomId, username, role }) => {
-    createRoom(roomId);
+function canModifyStroke(socket, stroke) {
+  return isTeacher(socket) || stroke.username === socket.username;
+}
+
+function normalizeStroke(socket, rawStroke) {
+  const roomId = socket.roomId || rawStroke.roomId;
+
+  const points = Array.isArray(rawStroke.points)
+    ? rawStroke.points
+        .filter((p) => typeof p.x === "number" && typeof p.y === "number")
+        .slice(0, 5000)
+    : [];
+
+  return {
+    id: String(rawStroke.id || Date.now() + "-" + Math.random()),
+    roomId,
+    username: socket.username,
+    role: socket.role,
+    tool: rawStroke.tool || "pen",
+    color: rawStroke.color || (socket.role === "teacher" ? "#111827" : "#2563eb"),
+    size: Number(rawStroke.size) || (socket.role === "teacher" ? 4 : 3),
+    points,
+    createdAt: rawStroke.createdAt || Date.now()
+  };
+}
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  socket.on("join-room", (data) => {
+    const roomId = String(data.roomId || "default").trim();
+    const username = String(data.username || "User").trim();
+    const role = data.role === "teacher" ? "teacher" : "student";
+
+    createRoomIfNotExists(roomId);
 
     socket.join(roomId);
+
     socket.roomId = roomId;
+    socket.username = username;
     socket.role = role;
 
-    rooms[roomId].users[socket.id] = { username, role };
+    rooms[roomId].users[socket.id] = {
+      id: socket.id,
+      username,
+      role
+    };
 
     socket.emit("board-state", {
-      strokes: Object.values(rooms[roomId].strokes),
-      splitMode: rooms[roomId].splitMode
+      strokes: rooms[roomId].strokes,
+      splitMode: rooms[roomId].splitMode,
+      locked: rooms[roomId].locked
     });
 
     io.to(roomId).emit("room-users", getRoomUsers(roomId));
+
+    console.log(`${username} joined room ${roomId} as ${role}`);
   });
 
-  // CREATE / UPDATE STROKE
-  socket.on("stroke", (stroke) => {
-    const room = rooms[stroke.roomId];
-    if (!room) return;
+  socket.on("stroke-add", (rawStroke) => {
+    const roomId = socket.roomId || rawStroke.roomId;
+    if (!roomId) return;
 
-    room.strokes[stroke.id] = stroke;
-    room.history.push(stroke.id);
+    createRoomIfNotExists(roomId);
 
-    io.to(stroke.roomId).emit("stroke", stroke);
-  });
-
-  // DELETE STROKE (ERASER)
-  socket.on("erase", ({ roomId, strokeId }) => {
     const room = rooms[roomId];
-    if (!room) return;
 
-    delete room.strokes[strokeId];
+    if (room.locked && !isTeacher(socket)) return;
 
-    io.to(roomId).emit("erase", strokeId);
+    const stroke = normalizeStroke(socket, rawStroke);
+
+    if (stroke.points.length < 2) return;
+
+    room.strokes.push(stroke);
+    room.redoStack = [];
+
+    socket.to(roomId).emit("stroke-add", stroke);
   });
 
-  // UNDO
-  socket.on("undo", (roomId) => {
+  socket.on("erase-stroke", (data) => {
+    const roomId = socket.roomId || data.roomId;
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
     const room = rooms[roomId];
-    if (!room || room.history.length === 0) return;
+    const strokeId = String(data.strokeId);
 
-    const lastId = room.history.pop();
-    const stroke = room.strokes[lastId];
+    const index = room.strokes.findIndex((stroke) => stroke.id === strokeId);
+    if (index === -1) return;
 
-    if (stroke) {
-      delete room.strokes[lastId];
-      room.redoStack.push(stroke);
-      io.to(roomId).emit("erase", lastId);
+    const stroke = room.strokes[index];
+
+    if (!canModifyStroke(socket, stroke)) return;
+
+    room.strokes.splice(index, 1);
+
+    io.to(roomId).emit("stroke-remove", {
+      strokeId
+    });
+  });
+
+  socket.on("undo", (data = {}) => {
+    const roomId = socket.roomId || data.roomId;
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
+    const room = rooms[roomId];
+
+    let index = -1;
+
+    for (let i = room.strokes.length - 1; i >= 0; i--) {
+      const stroke = room.strokes[i];
+
+      if (isTeacher(socket) || stroke.username === socket.username) {
+        index = i;
+        break;
+      }
     }
+
+    if (index === -1) return;
+
+    const [removedStroke] = room.strokes.splice(index, 1);
+    room.redoStack.push(removedStroke);
+
+    io.to(roomId).emit("stroke-remove", {
+      strokeId: removedStroke.id
+    });
   });
 
-  // REDO
-  socket.on("redo", (roomId) => {
+  socket.on("redo", (data = {}) => {
+    const roomId = socket.roomId || data.roomId;
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
     const room = rooms[roomId];
-    if (!room || room.redoStack.length === 0) return;
 
-    const stroke = room.redoStack.pop();
-    room.strokes[stroke.id] = stroke;
-    room.history.push(stroke.id);
+    let index = -1;
 
-    io.to(roomId).emit("stroke", stroke);
+    for (let i = room.redoStack.length - 1; i >= 0; i--) {
+      const stroke = room.redoStack[i];
+
+      if (isTeacher(socket) || stroke.username === socket.username) {
+        index = i;
+        break;
+      }
+    }
+
+    if (index === -1) return;
+
+    const [stroke] = room.redoStack.splice(index, 1);
+    room.strokes.push(stroke);
+
+    io.to(roomId).emit("stroke-add", stroke);
   });
 
-  socket.on("clear", (roomId) => {
-    createRoom(roomId);
+  socket.on("clear", (roomIdFromClient) => {
+    const roomId = socket.roomId || roomIdFromClient;
+    if (!roomId) return;
 
-    rooms[roomId].strokes = {};
-    rooms[roomId].history = [];
+    createRoomIfNotExists(roomId);
+
+    if (!isTeacher(socket)) return;
+
+    rooms[roomId].strokes = [];
     rooms[roomId].redoStack = [];
 
     io.to(roomId).emit("clear");
   });
 
+  socket.on("split-board", (data) => {
+    const roomId = socket.roomId || data.roomId;
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
+    if (!isTeacher(socket)) return;
+
+    rooms[roomId].splitMode = Boolean(data.splitMode);
+
+    io.to(roomId).emit("split-board", {
+      splitMode: rooms[roomId].splitMode
+    });
+  });
+
+  socket.on("lock-board", (data) => {
+    const roomId = socket.roomId || data.roomId;
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
+    if (!isTeacher(socket)) return;
+
+    rooms[roomId].locked = Boolean(data.locked);
+
+    io.to(roomId).emit("lock-board", {
+      locked: rooms[roomId].locked
+    });
+  });
+
   socket.on("disconnect", () => {
     const roomId = socket.roomId;
-    if (!roomId || !rooms[roomId]) return;
 
-    delete rooms[roomId].users[socket.id];
-    io.to(roomId).emit("room-users", getRoomUsers(roomId));
+    if (roomId && rooms[roomId]) {
+      delete rooms[roomId].users[socket.id];
+      io.to(roomId).emit("room-users", getRoomUsers(roomId));
+    }
+
+    console.log("User disconnected:", socket.id);
   });
 });
 
-server.listen(3000, () => console.log("running"));
+server.listen(process.env.PORT || 3000, () => {
+  console.log("Server berjalan di port", process.env.PORT || 3000);
+});
