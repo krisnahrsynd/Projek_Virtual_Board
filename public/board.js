@@ -8,6 +8,7 @@ const role = params.get("role") || "student";
 
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
+const boardArea = document.querySelector(".board-area");
 
 const splitBtn = document.getElementById("splitBtn");
 const clearBtn = document.getElementById("clearBtn");
@@ -45,6 +46,7 @@ const materialOpenLink = document.getElementById("materialOpenLink");
 const materialBadge = document.getElementById("materialBadge");
 const materialName = document.getElementById("materialName");
 const materialOpenBtn = document.getElementById("materialOpenBtn");
+const materialScrollBtn = document.getElementById("materialScrollBtn");
 const materialHideBtn = document.getElementById("materialHideBtn");
 
 const shapeMenuBtn = document.getElementById("shapeMenuBtn");
@@ -107,6 +109,7 @@ let locked = false;
 let materials = [];
 let currentMaterial = null;
 let materialVisible = true;
+let materialScrollMode = false;
 
 let tool = "pen";
 let previousToolBeforeSpace = null;
@@ -156,6 +159,23 @@ function setStatus(text) {
 
 function updateZoomLabel() {
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+}
+
+function setMaterialScrollMode(enabled) {
+  const next = Boolean(enabled && currentMaterial && materialVisible);
+
+  materialScrollMode = next;
+  boardArea.classList.toggle("material-scroll-mode", materialScrollMode);
+
+  if (materialScrollBtn) {
+    materialScrollBtn.textContent = materialScrollMode ? "Annotate" : "Scroll";
+  }
+
+  if (materialScrollMode) {
+    setStatus("Mode scroll materi aktif. Klik Annotate untuk mencoret lagi.");
+  } else {
+    updateToolUI();
+  }
 }
 
 function getCenteredOffsetX() {
@@ -336,6 +356,8 @@ function toggleShapeMenu() {
 }
 
 function setTool(nextTool) {
+  setMaterialScrollMode(false);
+
   tool = nextTool;
 
   if (!SHAPE_TOOLS.includes(nextTool)) {
@@ -425,8 +447,6 @@ function updateSplitUI() {
 }
 
 function resizeCanvas() {
-  const boardArea = document.querySelector(".board-area");
-
   canvas.width = boardArea.clientWidth;
   canvas.height = boardArea.clientHeight;
 
@@ -1522,6 +1542,10 @@ function setCurrentMaterial(material, visible = true) {
   currentMaterial = material || null;
   materialVisible = Boolean(material && visible);
 
+  if (!currentMaterial || !materialVisible) {
+    setMaterialScrollMode(false);
+  }
+
   renderMaterialViewer();
   renderMaterialList();
   requestRedraw();
@@ -1533,6 +1557,7 @@ function renderMaterialViewer() {
     materialBadge.classList.add("hidden");
     materialFrame.removeAttribute("src");
     materialOpenLink.href = "#";
+    setMaterialScrollMode(false);
     return;
   }
 
@@ -1800,6 +1825,10 @@ canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   closeShapeMenu();
 
+  if (materialScrollMode) {
+    return;
+  }
+
   if (tool === "pan") {
     activePointers[event.pointerId] = true;
 
@@ -1871,6 +1900,10 @@ canvas.addEventListener("pointerdown", (event) => {
 canvas.addEventListener("pointermove", (event) => {
   event.preventDefault();
 
+  if (materialScrollMode) {
+    return;
+  }
+
   if (isPanning && panPointerId === event.pointerId) {
     updatePan(event);
     return;
@@ -1929,6 +1962,10 @@ canvas.addEventListener("pointerout", handlePointerLeave);
 canvas.addEventListener(
   "wheel",
   (event) => {
+    if (materialScrollMode) {
+      return;
+    }
+
     event.preventDefault();
 
     const screen = getScreenPosition(event);
@@ -1993,8 +2030,13 @@ materialOpenBtn.addEventListener("click", () => {
   window.open(currentMaterial.url, "_blank");
 });
 
+materialScrollBtn.addEventListener("click", () => {
+  setMaterialScrollMode(!materialScrollMode);
+});
+
 materialHideBtn.addEventListener("click", async () => {
   materialVisible = false;
+  setMaterialScrollMode(false);
   renderMaterialViewer();
   requestRedraw();
 
