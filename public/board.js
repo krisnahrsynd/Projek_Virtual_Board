@@ -17,6 +17,7 @@ const redoBtn = document.getElementById("redoBtn");
 const lockBtn = document.getElementById("lockBtn");
 const exportBtn = document.getElementById("exportBtn");
 
+const panTool = document.getElementById("panTool");
 const selectTool = document.getElementById("selectTool");
 const penTool = document.getElementById("penTool");
 const eraserTool = document.getElementById("eraserTool");
@@ -24,6 +25,11 @@ const textTool = document.getElementById("textTool");
 const lineTool = document.getElementById("lineTool");
 const rectTool = document.getElementById("rectTool");
 const circleTool = document.getElementById("circleTool");
+
+const zoomOutBtn = document.getElementById("zoomOutBtn");
+const zoomInBtn = document.getElementById("zoomInBtn");
+const fitViewBtn = document.getElementById("fitViewBtn");
+const zoomLabel = document.getElementById("zoomLabel");
 
 const colorPicker = document.getElementById("colorPicker");
 const sizeSlider = document.getElementById("sizeSlider");
@@ -48,15 +54,30 @@ const DEFAULT_STUDENT_COLOR = "#2563eb";
 const CURSOR_INTERVAL = 35;
 const STROKE_PROGRESS_INTERVAL = 18;
 
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 5;
+const ZOOM_STEP = 1.15;
+const PAN_MARGIN = 90;
+
+let baseScale = 1;
+let zoom = 1;
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
+let panX = 0;
+let panY = 0;
+
+let isPanning = false;
+let panPointerId = null;
+let lastPanScreen = null;
 
 let strokes = [];
 let splitMode = false;
 let locked = false;
 
 let tool = "pen";
+let previousToolBeforeSpace = null;
+
 let color = role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR;
 let size = role === "teacher" ? 4 : 3;
 
@@ -80,6 +101,149 @@ sizeLabel.textContent = size;
 
 function uid() {
   return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function updateZoomLabel() {
+  zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+}
+
+function getCenteredOffsetX() {
+  return (canvas.width - VIRTUAL_WIDTH * scale) / 2;
+}
+
+function getCenteredOffsetY() {
+  return (canvas.height - VIRTUAL_HEIGHT * scale) / 2;
+}
+
+function clampPan() {
+  const boardW = VIRTUAL_WIDTH * scale;
+  const boardH = VIRTUAL_HEIGHT * scale;
+
+  const centeredX = getCenteredOffsetX();
+  const centeredY = getCenteredOffsetY();
+
+  let currentOffsetX = centeredX + panX;
+  let currentOffsetY = centeredY + panY;
+
+  const minOffsetX = Math.min(canvas.width - PAN_MARGIN - boardW, PAN_MARGIN);
+  const maxOffsetX = Math.max(canvas.width - PAN_MARGIN - boardW, PAN_MARGIN);
+
+  const minOffsetY = Math.min(canvas.height - PAN_MARGIN - boardH, PAN_MARGIN);
+  const maxOffsetY = Math.max(canvas.height - PAN_MARGIN - boardH, PAN_MARGIN);
+
+  if (currentOffsetX < minOffsetX) {
+    panX += minOffsetX - currentOffsetX;
+  }
+
+  if (currentOffsetX > maxOffsetX) {
+    panX += maxOffsetX - currentOffsetX;
+  }
+
+  currentOffsetY = centeredY + panY;
+
+  if (currentOffsetY < minOffsetY) {
+    panY += minOffsetY - currentOffsetY;
+  }
+
+  if (currentOffsetY > maxOffsetY) {
+    panY += maxOffsetY - currentOffsetY;
+  }
+}
+
+function updateCamera() {
+  zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+
+  scale = baseScale * zoom;
+
+  clampPan();
+
+  offsetX = getCenteredOffsetX() + panX;
+  offsetY = getCenteredOffsetY() + panY;
+
+  updateZoomLabel();
+}
+
+function fitView() {
+  zoom = 1;
+  panX = 0;
+  panY = 0;
+  updateCamera();
+  requestRedraw();
+  setStatus("View disesuaikan ke layar.");
+}
+
+function getScreenPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  };
+}
+
+function screenToVirtual(screenX, screenY) {
+  return {
+    x: (screenX - offsetX) / scale,
+    y: (screenY - offsetY) / scale
+  };
+}
+
+function zoomAtScreenPoint(factor, screenX, screenY) {
+  const before = screenToVirtual(screenX, screenY);
+
+  zoom = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM);
+  scale = baseScale * zoom;
+
+  const centeredX = getCenteredOffsetX();
+  const centeredY = getCenteredOffsetY();
+
+  panX = screenX - centeredX - before.x * scale;
+  panY = screenY - centeredY - before.y * scale;
+
+  updateCamera();
+  requestRedraw();
+}
+
+function zoomAtCenter(factor) {
+  zoomAtScreenPoint(factor, canvas.width / 2, canvas.height / 2);
+}
+
+function startPan(pointerId, event) {
+  isPanning = true;
+  panPointerId = pointerId;
+  lastPanScreen = getScreenPosition(event);
+
+  setStatus("Geser board dengan drag.");
+}
+
+function updatePan(event) {
+  if (!isPanning || panPointerId !== event.pointerId || !lastPanScreen) return;
+
+  const screen = getScreenPosition(event);
+
+  panX += screen.x - lastPanScreen.x;
+  panY += screen.y - lastPanScreen.y;
+
+  lastPanScreen = screen;
+
+  updateCamera();
+  requestRedraw();
+}
+
+function finishPan(pointerId) {
+  if (!isPanning || panPointerId !== pointerId) return false;
+
+  isPanning = false;
+  panPointerId = null;
+  lastPanScreen = null;
+
+  updateToolUI();
+
+  return true;
 }
 
 function emitStrokeProgress(stroke, force = false) {
@@ -116,6 +280,7 @@ function setTool(nextTool) {
 
 function updateToolUI() {
   const buttons = [
+    [panTool, "pan"],
     [selectTool, "select"],
     [penTool, "pen"],
     [eraserTool, "eraser"],
@@ -129,11 +294,13 @@ function updateToolUI() {
     button.classList.toggle("active", tool === value);
   });
 
+  canvas.classList.toggle("pan-cursor", tool === "pan");
   canvas.classList.toggle("select-cursor", tool === "select");
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
   canvas.classList.toggle("text-cursor", tool === "text");
 
   const label = {
+    pan: "Mode: Pan",
     select: "Mode: Select",
     pen: "Mode: Pen",
     eraser: "Mode: Eraser",
@@ -161,7 +328,7 @@ function updateTeacherControls() {
 function updateLockUI() {
   lockBtn.textContent = locked ? "Unlock Board" : "Lock Board";
 
-  if (locked && role !== "teacher") {
+  if (locked && role !== "teacher" && tool !== "pan") {
     setStatus("Board dikunci oleh guru.");
   } else if (!locked) {
     updateToolUI();
@@ -181,11 +348,9 @@ function resizeCanvas() {
   const scaleX = canvas.width / VIRTUAL_WIDTH;
   const scaleY = canvas.height / VIRTUAL_HEIGHT;
 
-  scale = Math.min(scaleX, scaleY);
+  baseScale = Math.min(scaleX, scaleY);
 
-  offsetX = (canvas.width - VIRTUAL_WIDTH * scale) / 2;
-  offsetY = (canvas.height - VIRTUAL_HEIGHT * scale) / 2;
-
+  updateCamera();
   requestRedraw();
 }
 
@@ -254,14 +419,11 @@ function drawLockedOverlay() {
 }
 
 function toVirtualPosition(event) {
-  const rect = canvas.getBoundingClientRect();
-
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
+  const screen = getScreenPosition(event);
 
   return {
-    x: (screenX - offsetX) / scale,
-    y: (screenY - offsetY) / scale
+    x: (screen.x - offsetX) / scale,
+    y: (screen.y - offsetY) / scale
   };
 }
 
@@ -1033,6 +1195,11 @@ function stopPointer(event) {
     // aman diabaikan
   }
 
+  if (finishPan(pointerId)) {
+    delete activePointers[pointerId];
+    return;
+  }
+
   if (finishSelectionDrag(pointerId)) {
     delete activePointers[pointerId];
     return;
@@ -1056,6 +1223,19 @@ function handlePointerLeave(event) {
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
+
+  if (tool === "pan") {
+    activePointers[event.pointerId] = true;
+
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch (error) {
+      // aman diabaikan
+    }
+
+    startPan(event.pointerId, event);
+    return;
+  }
 
   if (locked && role !== "teacher") {
     setStatus("Board sedang dikunci oleh guru.");
@@ -1104,6 +1284,11 @@ canvas.addEventListener("pointerdown", (event) => {
 
 canvas.addEventListener("pointermove", (event) => {
   event.preventDefault();
+
+  if (isPanning && panPointerId === event.pointerId) {
+    updatePan(event);
+    return;
+  }
 
   const pos = toVirtualPosition(event);
 
@@ -1155,6 +1340,20 @@ canvas.addEventListener("pointerleave", handlePointerLeave);
 canvas.addEventListener("pointercancel", handlePointerLeave);
 canvas.addEventListener("pointerout", handlePointerLeave);
 
+canvas.addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+
+    const screen = getScreenPosition(event);
+    const factor = event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+
+    zoomAtScreenPoint(factor, screen.x, screen.y);
+  },
+  { passive: false }
+);
+
+panTool.addEventListener("click", () => setTool("pan"));
 selectTool.addEventListener("click", () => setTool("select"));
 penTool.addEventListener("click", () => setTool("pen"));
 eraserTool.addEventListener("click", () => setTool("eraser"));
@@ -1162,6 +1361,18 @@ textTool.addEventListener("click", () => setTool("text"));
 lineTool.addEventListener("click", () => setTool("line"));
 rectTool.addEventListener("click", () => setTool("rect"));
 circleTool.addEventListener("click", () => setTool("circle"));
+
+zoomOutBtn.addEventListener("click", () => {
+  zoomAtCenter(1 / ZOOM_STEP);
+});
+
+zoomInBtn.addEventListener("click", () => {
+  zoomAtCenter(ZOOM_STEP);
+});
+
+fitViewBtn.addEventListener("click", () => {
+  fitView();
+});
 
 colorPicker.addEventListener("input", (event) => {
   color = event.target.value;
@@ -1254,6 +1465,18 @@ backBtn.addEventListener("click", () => {
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
 
+  if (event.code === "Space" && !event.repeat) {
+    event.preventDefault();
+
+    if (tool !== "pan") {
+      previousToolBeforeSpace = tool;
+      setTool("pan");
+    }
+
+    return;
+  }
+
+  if (key === "h") setTool("pan");
   if (key === "v") setTool("select");
   if (key === "p") setTool("pen");
   if (key === "e") setTool("eraser");
@@ -1261,6 +1484,18 @@ window.addEventListener("keydown", (event) => {
   if (key === "l") setTool("line");
   if (key === "r") setTool("rect");
   if (key === "c") setTool("circle");
+
+  if (key === "0") {
+    fitView();
+  }
+
+  if (key === "=" || key === "+") {
+    zoomAtCenter(ZOOM_STEP);
+  }
+
+  if (key === "-" || key === "_") {
+    zoomAtCenter(1 / ZOOM_STEP);
+  }
 
   if ((event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey) {
     event.preventDefault();
@@ -1273,6 +1508,15 @@ window.addEventListener("keydown", (event) => {
   ) {
     event.preventDefault();
     socket.emit("redo", { roomId });
+  }
+});
+
+window.addEventListener("keyup", (event) => {
+  if (event.code === "Space" && previousToolBeforeSpace) {
+    event.preventDefault();
+
+    setTool(previousToolBeforeSpace);
+    previousToolBeforeSpace = null;
   }
 });
 

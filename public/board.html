@@ -26,6 +26,7 @@
   </div>
 
   <div class="toolbar">
+    <button id="panTool" class="tool-btn" type="button">Pan</button>
     <button id="selectTool" class="tool-btn" type="button">Select</button>
     <button id="penTool" class="tool-btn active" type="button">Pen</button>
     <button id="eraserTool" class="tool-btn" type="button">Eraser</button>
@@ -33,6 +34,13 @@
     <button id="lineTool" class="tool-btn" type="button">Line</button>
     <button id="rectTool" class="tool-btn" type="button">Rect</button>
     <button id="circleTool" class="tool-btn" type="button">Circle</button>
+
+    <div class="zoom-controls">
+      <button id="zoomOutBtn" type="button">−</button>
+      <span id="zoomLabel">100%</span>
+      <button id="zoomInBtn" type="button">+</button>
+      <button id="fitViewBtn" type="button">Fit</button>
+    </div>
 
     <label class="tool-control">
       Warna
@@ -55,6 +63,7 @@
 
       <div class="hint-box">
         <strong>Shortcut</strong>
+        <p>H = Pan</p>
         <p>V = Select</p>
         <p>P = Pen</p>
         <p>E = Eraser</p>
@@ -62,6 +71,8 @@
         <p>L = Line</p>
         <p>R = Rect</p>
         <p>C = Circle</p>
+        <p>0 = Fit View</p>
+        <p>+ / - = Zoom</p>
         <p>Ctrl + Z = Undo</p>
         <p>Ctrl + Y = Redo</p>
       </div>

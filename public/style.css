@@ -137,6 +137,35 @@ button:disabled {
   border-color: #111827;
 }
 
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+}
+
+.zoom-controls button {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: #111827;
+  color: #ffffff;
+}
+
+.zoom-controls button:hover {
+  background: #374151;
+}
+
+#zoomLabel {
+  min-width: 48px;
+  text-align: center;
+  font-size: 13px;
+  color: #111827;
+  font-weight: 700;
+}
+
 .tool-control {
   display: flex;
   align-items: center;
@@ -226,6 +255,14 @@ canvas {
   background: white;
   touch-action: none;
   cursor: crosshair;
+}
+
+canvas.pan-cursor {
+  cursor: grab;
+}
+
+canvas.pan-cursor:active {
+  cursor: grabbing;
 }
 
 canvas.eraser-cursor {
@@ -475,7 +512,7 @@ canvas.select-cursor:active {
 
 /* RESPONSIVE BOARD */
 
-@media (max-width: 1050px) {
+@media (max-width: 1150px) {
   .topbar {
     height: auto;
     min-height: 56px;
@@ -500,7 +537,7 @@ canvas.select-cursor:active {
   }
 
   .main-layout {
-    height: calc(100vh - 175px);
+    height: calc(100vh - 178px);
   }
 
   .sidebar {
@@ -514,7 +551,7 @@ canvas.select-cursor:active {
   }
 
   .main-layout {
-    height: calc(100vh - 190px);
+    height: calc(100vh - 210px);
   }
 
   .tool-size input[type="range"] {
@@ -524,6 +561,10 @@ canvas.select-cursor:active {
   .status-text {
     width: 100%;
     margin-left: 0;
+  }
+
+  .zoom-controls {
+    order: 10;
   }
 }
 
