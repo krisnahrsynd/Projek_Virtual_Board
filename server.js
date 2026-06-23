@@ -51,25 +51,22 @@ io.on("connection", (socket) => {
     });
 
     io.to(roomId).emit("room-users", getRoomUsers(roomId));
-
-    console.log(`${username} joined room ${roomId} as ${role}`);
   });
 
-  socket.on("draw", (data) => {
-    const { roomId } = data;
-
+  // stroke realtime
+  socket.on("draw", (stroke) => {
+    const roomId = stroke.roomId;
     createRoomIfNotExists(roomId);
 
-    rooms[roomId].strokes.push(data);
+    rooms[roomId].strokes.push(stroke);
 
-    socket.to(roomId).emit("draw", data);
+    socket.to(roomId).emit("draw", stroke);
   });
 
   socket.on("clear", (roomId) => {
     createRoomIfNotExists(roomId);
 
     rooms[roomId].strokes = [];
-
     io.to(roomId).emit("clear");
   });
 
@@ -80,9 +77,7 @@ io.on("connection", (socket) => {
 
     rooms[roomId].splitMode = splitMode;
 
-    io.to(roomId).emit("split-board", {
-      splitMode
-    });
+    io.to(roomId).emit("split-board", { splitMode });
   });
 
   socket.on("disconnect", () => {
@@ -90,19 +85,11 @@ io.on("connection", (socket) => {
 
     if (roomId && rooms[roomId]) {
       delete rooms[roomId].users[socket.id];
-
       io.to(roomId).emit("room-users", getRoomUsers(roomId));
-
-      if (Object.keys(rooms[roomId].users).length === 0) {
-        // Coretan tetap disimpan selama server hidup
-        // Jangan delete room dulu agar state board tidak langsung hilang
-      }
     }
-
-    console.log("User disconnected:", socket.id);
   });
 });
 
 server.listen(process.env.PORT || 3000, () => {
-  console.log("Server berjalan di port", process.env.PORT || 3000);
+  console.log("Server running on port", process.env.PORT || 3000);
 });

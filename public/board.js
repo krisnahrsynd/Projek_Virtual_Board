@@ -25,16 +25,22 @@ roleLabel.textContent = role === "teacher" ? "Guru" : "Siswa";
 const VIRTUAL_WIDTH = 1280;
 const VIRTUAL_HEIGHT = 720;
 
-// Variabel untuk melacak banyak sentuhan (multi-touch) sekaligus
-const activePointers = {}; 
-
-let splitMode = false;
-
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
 
 let strokes = [];
+let currentStroke = null;
+
+let tool = "pen";
+let color = "#000000";
+let size = 3;
+
+const activePointers = {};
+let splitMode = false;
+
+let lastEmitTime = 0;
+const EMIT_INTERVAL = 16;
 
 function resizeCanvas() {
   const boardArea = document.querySelector(".board-area");
@@ -60,32 +66,19 @@ function clearScreenOnly() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.fillStyle = "white";
-  ctx.fillRect(
-    offsetX,
-    offsetY,
-    VIRTUAL_WIDTH * scale,
-    VIRTUAL_HEIGHT * scale
-  );
+  ctx.fillRect(offsetX, offsetY, VIRTUAL_WIDTH * scale, VIRTUAL_HEIGHT * scale);
 
   ctx.strokeStyle = "#111827";
   ctx.lineWidth = 2;
-  ctx.strokeRect(
-    offsetX,
-    offsetY,
-    VIRTUAL_WIDTH * scale,
-    VIRTUAL_HEIGHT * scale
-  );
+  ctx.strokeRect(offsetX, offsetY, VIRTUAL_WIDTH * scale, VIRTUAL_HEIGHT * scale);
 }
 
 function toVirtualPosition(event) {
   const rect = canvas.getBoundingClientRect();
 
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
-
   return {
-    x: (screenX - offsetX) / scale,
-    y: (screenY - offsetY) / scale
+    x: (event.clientX - rect.left - offsetX) / scale,
+    y: (event.clientY - rect.top - offsetY) / scale
   };
 }
 
@@ -93,30 +86,50 @@ function isInsideBoard(x, y) {
   return x >= 0 && x <= VIRTUAL_WIDTH && y >= 0 && y <= VIRTUAL_HEIGHT;
 }
 
-function drawSplitLine() {
-  if (!splitMode) return;
-
-  ctx.beginPath();
-  ctx.moveTo(offsetX + (VIRTUAL_WIDTH / 2) * scale, offsetY);
-  ctx.lineTo(
-    offsetX + (VIRTUAL_WIDTH / 2) * scale,
-    offsetY + VIRTUAL_HEIGHT * scale
-  );
-  ctx.strokeStyle = "red";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 10]);
-  ctx.stroke();
-  ctx.setLineDash([]);
+function startStroke(x, y) {
+  currentStroke = {
+    roomId,
+    username,
+    role,
+    tool,
+    color,
+    size,
+    points: [{ x, y }]
+  };
 }
 
-function drawLineOnScreen(x1, y1, x2, y2, drawRole) {
+function addPoint(x, y) {
+  if (!currentStroke) return;
+  currentStroke.points.push({ x, y });
+}
+
+function endStroke() {
+  if (!currentStroke) return;
+
+  strokes.push(currentStroke);
+  socket.emit("draw", currentStroke);
+  currentStroke = null;
+}
+
+function drawStroke(stroke) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 2) return;
+
   ctx.beginPath();
+  ctx.moveTo(
+    offsetX + pts[0].x * scale,
+    offsetY + pts[0].y * scale
+  );
 
-  ctx.moveTo(offsetX + x1 * scale, offsetY + y1 * scale);
-  ctx.lineTo(offsetX + x2 * scale, offsetY + y2 * scale);
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(
+      offsetX + pts[i].x * scale,
+      offsetY + pts[i].y * scale
+    );
+  }
 
-  ctx.strokeStyle = drawRole === "teacher" ? "black" : "blue";
-  ctx.lineWidth = (drawRole === "teacher" ? 4 : 2) * scale;
+  ctx.strokeStyle = stroke.color || "black";
+  ctx.lineWidth = (stroke.size || 3) * scale;
   ctx.lineCap = "round";
   ctx.stroke();
 }
@@ -124,94 +137,56 @@ function drawLineOnScreen(x1, y1, x2, y2, drawRole) {
 function redrawAll() {
   clearScreenOnly();
 
-  strokes.forEach((stroke) => {
-    drawLineOnScreen(
-      stroke.x1,
-      stroke.y1,
-      stroke.x2,
-      stroke.y2,
-      stroke.role
-    );
-  });
+  strokes.forEach(drawStroke);
 
-  drawSplitLine();
-}
-
-function drawLine(x1, y1, x2, y2, drawRole, emit = true) {
-  const stroke = {
-    roomId,
-    username,
-    role: drawRole,
-    x1,
-    y1,
-    x2,
-    y2
-  };
-
-  strokes.push(stroke);
-
-  redrawAll();
-
-  if (emit) {
-    socket.emit("draw", stroke);
-  }
+  if (currentStroke) drawStroke(currentStroke);
 }
 
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 
-socket.emit("join-room", {
-  roomId,
-  username,
-  role
-});
+socket.emit("join-room", { roomId, username, role });
 
 socket.on("board-state", (data) => {
   strokes = data.strokes || [];
   splitMode = data.splitMode || false;
 
-  splitBtn.textContent = splitMode ? "Unsplit Board" : "Split Board";
-
   redrawAll();
 });
 
-// === LOGIKA MULTI-TOUCH DIMULAI DI SINI ===
-
 canvas.addEventListener("pointerdown", (event) => {
   const pos = toVirtualPosition(event);
-
-  // Pastikan sentuhan berada di dalam area board
   if (!isInsideBoard(pos.x, pos.y)) return;
 
-  // Simpan posisi awal untuk jari/stylus dengan ID tertentu
-  activePointers[event.pointerId] = { x: pos.x, y: pos.y };
+  activePointers[event.pointerId] = pos;
+  startStroke(pos.x, pos.y);
 });
 
 canvas.addEventListener("pointermove", (event) => {
-  // Hanya proses jika jari/stylus ini sedang aktif menekan
   if (!activePointers[event.pointerId]) return;
 
+  const now = Date.now();
   const pos = toVirtualPosition(event);
 
-  // Jika jari keluar batas board, hentikan coretan untuk jari ini
   if (!isInsideBoard(pos.x, pos.y)) {
     delete activePointers[event.pointerId];
+    endStroke();
     return;
   }
 
-  // Ambil posisi terakhir untuk jari ini
-  const lastPos = activePointers[event.pointerId];
+  addPoint(pos.x, pos.y);
+  activePointers[event.pointerId] = pos;
 
-  // Gambar garis
-  drawLine(lastPos.x, lastPos.y, pos.x, pos.y, role, true);
+  redrawAll();
 
-  // Perbarui posisi terakhir jari ini
-  activePointers[event.pointerId] = { x: pos.x, y: pos.y };
+  if (now - lastEmitTime > EMIT_INTERVAL) {
+    lastEmitTime = now;
+  }
 });
 
-// Fungsi untuk menghapus pointer saat dilepas/keluar
 function stopPointer(event) {
   delete activePointers[event.pointerId];
+  endStroke();
 }
 
 canvas.addEventListener("pointerup", stopPointer);
@@ -219,10 +194,9 @@ canvas.addEventListener("pointerleave", stopPointer);
 canvas.addEventListener("pointercancel", stopPointer);
 canvas.addEventListener("pointerout", stopPointer);
 
-// === LOGIKA MULTI-TOUCH SELESAI ===
-
-socket.on("draw", (data) => {
-  drawLine(data.x1, data.y1, data.x2, data.y2, data.role, false);
+socket.on("draw", (stroke) => {
+  strokes.push(stroke);
+  redrawAll();
 });
 
 clearBtn.addEventListener("click", () => {
@@ -243,18 +217,12 @@ splitBtn.addEventListener("click", () => {
   });
 });
 
-socket.on("split-board", (data) => {
-  splitMode = data.splitMode;
-  splitBtn.textContent = splitMode ? "Unsplit Board" : "Split Board";
-  redrawAll();
-});
-
 socket.on("room-users", (users) => {
   userList.innerHTML = "";
 
-  users.forEach((user) => {
+  users.forEach((u) => {
     const li = document.createElement("li");
-    li.textContent = `${user.username} (${user.role === "teacher" ? "Guru" : "Siswa"})`;
+    li.textContent = `${u.username} (${u.role === "teacher" ? "Guru" : "Siswa"})`;
     userList.appendChild(li);
   });
 });
