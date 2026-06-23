@@ -6,9 +6,12 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
 
-app.use(express.json());
+const io = new Server(server, {
+  maxHttpBufferSize: 8 * 1024 * 1024
+});
+
+app.use(express.json({ limit: "8mb" }));
 app.use(express.static("public"));
 
 const DATA_DIR =
@@ -20,6 +23,7 @@ const DATA_FILE = path.join(DATA_DIR, "rooms.json");
 
 const SAVE_DELAY = 300;
 const MAX_STROKES_PER_ROOM = 10000;
+const MAX_IMAGE_DATA_URL_LENGTH = 6_500_000;
 
 const rooms = {};
 
@@ -150,12 +154,12 @@ function normalizeStroke(socket, rawStroke = {}) {
     .filter(Boolean)
     .slice(0, 5000);
 
-  const allowedTypes = ["freehand", "shape", "text"];
+  const allowedTypes = ["freehand", "shape", "text", "image"];
   const type = allowedTypes.includes(rawStroke.type)
     ? rawStroke.type
     : "freehand";
 
-  const allowedTools = ["pen", "line", "rect", "circle", "text"];
+  const allowedTools = ["pen", "line", "rect", "circle", "text", "image"];
   const tool = allowedTools.includes(rawStroke.tool)
     ? rawStroke.tool
     : "pen";
@@ -167,6 +171,12 @@ function normalizeStroke(socket, rawStroke = {}) {
 
   const text = String(rawStroke.text || "").slice(0, 500);
 
+  const rawSrc = String(rawStroke.src || "");
+  const src =
+    rawSrc.length <= MAX_IMAGE_DATA_URL_LENGTH
+      ? rawSrc
+      : "";
+
   return {
     id: String(rawStroke.id || Date.now() + "-" + Math.random()),
     roomId,
@@ -177,12 +187,15 @@ function normalizeStroke(socket, rawStroke = {}) {
     tool,
     shape,
     text,
+    src,
     color: String(
       rawStroke.color ||
       (socket.role === "teacher" ? "#111827" : "#2563eb")
     ),
     size: Math.max(1, Math.min(40, Number(rawStroke.size) || 3)),
     fontSize: Math.max(10, Math.min(96, Number(rawStroke.fontSize) || 28)),
+    width: Math.max(1, Math.min(1280, Number(rawStroke.width) || 240)),
+    height: Math.max(1, Math.min(720, Number(rawStroke.height) || 160)),
     points,
     createdAt: Number(rawStroke.createdAt) || Date.now()
   };
@@ -201,6 +214,16 @@ function isValidStroke(stroke) {
 
   if (stroke.type === "text") {
     return stroke.text.trim().length > 0 && stroke.points.length >= 1;
+  }
+
+  if (stroke.type === "image") {
+    return (
+      typeof stroke.src === "string" &&
+      stroke.src.startsWith("data:image/") &&
+      stroke.points.length >= 1 &&
+      stroke.width > 0 &&
+      stroke.height > 0
+    );
   }
 
   return false;
@@ -250,6 +273,7 @@ function getRoomSummary(roomId, room) {
   const freehandCount = strokes.filter((s) => s.type === "freehand").length;
   const shapeCount = strokes.filter((s) => s.type === "shape").length;
   const textCount = strokes.filter((s) => s.type === "text").length;
+  const imageCount = strokes.filter((s) => s.type === "image").length;
 
   return {
     roomId,
@@ -262,6 +286,7 @@ function getRoomSummary(roomId, room) {
     freehandCount,
     shapeCount,
     textCount,
+    imageCount,
     lastActivity: getLastActivity(room)
   };
 }

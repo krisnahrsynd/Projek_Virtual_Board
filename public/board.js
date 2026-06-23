@@ -29,6 +29,8 @@ const selectTool = document.getElementById("selectTool");
 const penTool = document.getElementById("penTool");
 const eraserTool = document.getElementById("eraserTool");
 const textTool = document.getElementById("textTool");
+const imageTool = document.getElementById("imageTool");
+const imageInput = document.getElementById("imageInput");
 
 const shapeMenuBtn = document.getElementById("shapeMenuBtn");
 const shapeMenu = document.getElementById("shapeMenu");
@@ -106,6 +108,7 @@ const activeShapes = {};
 const activeErasers = {};
 const activeRemoteStrokes = {};
 const remoteCursors = {};
+const imageCache = {};
 
 colorPicker.value = color;
 sizeSlider.value = size;
@@ -218,6 +221,15 @@ function screenToVirtual(screenX, screenY) {
   };
 }
 
+function getVisibleCenterVirtual() {
+  const center = screenToVirtual(canvas.width / 2, canvas.height / 2);
+
+  return {
+    x: clamp(center.x, 0, VIRTUAL_WIDTH),
+    y: clamp(center.y, 0, VIRTUAL_HEIGHT)
+  };
+}
+
 function zoomAtScreenPoint(factor, screenX, screenY) {
   const before = screenToVirtual(screenX, screenY);
 
@@ -320,6 +332,7 @@ function updateToolUI() {
     [penTool, "pen"],
     [eraserTool, "eraser"],
     [textTool, "text"],
+    [imageTool, "image"],
     [lineTool, "line"],
     [rectTool, "rect"],
     [circleTool, "circle"]
@@ -345,6 +358,7 @@ function updateToolUI() {
   canvas.classList.toggle("select-cursor", tool === "select");
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
   canvas.classList.toggle("text-cursor", tool === "text");
+  canvas.classList.toggle("image-cursor", tool === "image");
 
   const label = {
     pan: "Mode: Pan",
@@ -352,6 +366,7 @@ function updateToolUI() {
     pen: "Mode: Pen",
     eraser: "Mode: Eraser",
     text: "Mode: Text",
+    image: "Mode: Image",
     line: "Mode: Line",
     rect: "Mode: Rectangle",
     circle: "Mode: Circle"
@@ -480,6 +495,38 @@ function isInsideBoard(x, y) {
 
 function getStrokeColor(stroke) {
   return stroke.color || (stroke.role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR);
+}
+
+function getCachedImage(src) {
+  if (!src) return null;
+
+  if (imageCache[src] && imageCache[src].loaded) {
+    return imageCache[src].image;
+  }
+
+  if (!imageCache[src]) {
+    const image = new Image();
+
+    imageCache[src] = {
+      image,
+      loaded: false,
+      error: false
+    };
+
+    image.onload = () => {
+      imageCache[src].loaded = true;
+      requestRedraw();
+    };
+
+    image.onerror = () => {
+      imageCache[src].error = true;
+      requestRedraw();
+    };
+
+    image.src = src;
+  }
+
+  return null;
 }
 
 function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
@@ -632,6 +679,41 @@ function drawTextStroke(renderCtx, stroke, s, ox, oy) {
   renderCtx.restore();
 }
 
+function drawImageStroke(renderCtx, stroke, s, ox, oy) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 1) return;
+
+  const p = pts[0];
+  const width = stroke.width || 240;
+  const height = stroke.height || 160;
+
+  const x = ox + p.x * s;
+  const y = oy + p.y * s;
+  const w = width * s;
+  const h = height * s;
+
+  const image = getCachedImage(stroke.src);
+
+  renderCtx.save();
+
+  if (image) {
+    renderCtx.drawImage(image, x, y, w, h);
+  } else {
+    renderCtx.fillStyle = "#f3f4f6";
+    renderCtx.fillRect(x, y, w, h);
+
+    renderCtx.strokeStyle = "#9ca3af";
+    renderCtx.lineWidth = Math.max(1, 2 * s);
+    renderCtx.strokeRect(x, y, w, h);
+
+    renderCtx.fillStyle = "#374151";
+    renderCtx.font = `${14 * s}px Arial`;
+    renderCtx.fillText("Loading image...", x + 12 * s, y + 20 * s);
+  }
+
+  renderCtx.restore();
+}
+
 function drawStrokeOn(renderCtx, stroke, s = scale, ox = offsetX, oy = offsetY) {
   if (stroke.type === "shape") {
     drawShapeStroke(renderCtx, stroke, s, ox, oy);
@@ -640,6 +722,11 @@ function drawStrokeOn(renderCtx, stroke, s = scale, ox = offsetX, oy = offsetY) 
 
   if (stroke.type === "text") {
     drawTextStroke(renderCtx, stroke, s, ox, oy);
+    return;
+  }
+
+  if (stroke.type === "image") {
+    drawImageStroke(renderCtx, stroke, s, ox, oy);
     return;
   }
 
@@ -838,6 +925,18 @@ function getStrokeBounds(stroke) {
     };
   }
 
+  if (stroke.type === "image") {
+    const p = stroke.points && stroke.points[0];
+    if (!p) return null;
+
+    return {
+      x: p.x,
+      y: p.y,
+      width: stroke.width || 240,
+      height: stroke.height || 160
+    };
+  }
+
   const pts = stroke.points || [];
 
   if (pts.length === 0) return null;
@@ -911,6 +1010,18 @@ function canEraseLocal(stroke) {
 }
 
 function strokeHitTest(stroke, point, radius) {
+  if (stroke.type === "image") {
+    const bounds = getStrokeBounds(stroke);
+    if (!bounds) return false;
+
+    return (
+      point.x >= bounds.x - radius &&
+      point.x <= bounds.x + bounds.width + radius &&
+      point.y >= bounds.y - radius &&
+      point.y <= bounds.y + bounds.height + radius
+    );
+  }
+
   if (stroke.type === "text") {
     const box = getVirtualTextBox(stroke);
     if (!box) return false;
@@ -1120,6 +1231,143 @@ function createTextAt(pos) {
   requestRedraw();
 }
 
+function compressImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("File yang dipilih bukan gambar."));
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(new Error("Gagal membaca file gambar."));
+    };
+
+    reader.onload = () => {
+      const image = new Image();
+
+      image.onerror = () => {
+        reject(new Error("Gagal memproses gambar."));
+      };
+
+      image.onload = () => {
+        const maxDimension = 1400;
+        const ratio = Math.min(
+          1,
+          maxDimension / image.naturalWidth,
+          maxDimension / image.naturalHeight
+        );
+
+        const width = Math.max(1, Math.round(image.naturalWidth * ratio));
+        const height = Math.max(1, Math.round(image.naturalHeight * ratio));
+
+        const tempCanvas = document.createElement("canvas");
+        const tempCtx = tempCanvas.getContext("2d");
+
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+
+        tempCtx.fillStyle = "#ffffff";
+        tempCtx.fillRect(0, 0, width, height);
+        tempCtx.drawImage(image, 0, 0, width, height);
+
+        const src = tempCanvas.toDataURL("image/jpeg", 0.82);
+
+        resolve({
+          src,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          compressedWidth: width,
+          compressedHeight: height
+        });
+      };
+
+      image.src = reader.result;
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function getImageDisplaySize(naturalWidth, naturalHeight) {
+  const maxWidth = VIRTUAL_WIDTH * 0.45;
+  const maxHeight = VIRTUAL_HEIGHT * 0.55;
+
+  const ratio = Math.min(
+    1,
+    maxWidth / naturalWidth,
+    maxHeight / naturalHeight
+  );
+
+  return {
+    width: Math.max(60, naturalWidth * ratio),
+    height: Math.max(40, naturalHeight * ratio)
+  };
+}
+
+async function addImageFileToBoard(file) {
+  try {
+    setStatus("Memproses gambar...");
+
+    const imageData = await compressImageFile(file);
+
+    if (imageData.src.length > 6_500_000) {
+      alert("Ukuran gambar masih terlalu besar. Coba pilih gambar yang lebih kecil.");
+      setStatus("Gambar terlalu besar.");
+      return;
+    }
+
+    const displaySize = getImageDisplaySize(
+      imageData.naturalWidth,
+      imageData.naturalHeight
+    );
+
+    const center = getVisibleCenterVirtual();
+
+    const x = clamp(
+      center.x - displaySize.width / 2,
+      0,
+      VIRTUAL_WIDTH - displaySize.width
+    );
+
+    const y = clamp(
+      center.y - displaySize.height / 2,
+      0,
+      VIRTUAL_HEIGHT - displaySize.height
+    );
+
+    const stroke = {
+      id: uid(),
+      roomId,
+      username,
+      role,
+      type: "image",
+      tool: "image",
+      src: imageData.src,
+      width: displaySize.width,
+      height: displaySize.height,
+      points: [{ x, y }],
+      createdAt: Date.now()
+    };
+
+    strokes.push(stroke);
+    selectedStrokeId = stroke.id;
+
+    socket.emit("stroke-add", stroke);
+
+    setTool("select");
+    requestRedraw();
+
+    setStatus("Gambar berhasil ditambahkan.");
+  } catch (error) {
+    alert(error.message);
+    setStatus("Gagal menambahkan gambar.");
+  } finally {
+    imageInput.value = "";
+  }
+}
+
 function startFreehandStroke(pointerId, pos) {
   activeStrokes[pointerId] = {
     id: uid(),
@@ -1285,6 +1533,11 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  if (tool === "image") {
+    imageInput.click();
+    return;
+  }
+
   if (locked && role !== "teacher") {
     setStatus("Board sedang dikunci oleh guru.");
     return;
@@ -1419,6 +1672,19 @@ penTool.addEventListener("click", () => setTool("pen"));
 eraserTool.addEventListener("click", () => setTool("eraser"));
 textTool.addEventListener("click", () => setTool("text"));
 
+imageTool.addEventListener("click", () => {
+  setTool("image");
+  imageInput.click();
+});
+
+imageInput.addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+
+  if (!file) return;
+
+  addImageFileToBoard(file);
+});
+
 shapeMenuBtn.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleShapeMenu();
@@ -1474,7 +1740,54 @@ redoBtn.addEventListener("click", () => {
   socket.emit("redo", { roomId });
 });
 
-exportBtn.addEventListener("click", () => {
+function loadImageForExport(src) {
+  return new Promise((resolve) => {
+    if (!src) {
+      resolve(null);
+      return;
+    }
+
+    const cached = imageCache[src];
+
+    if (cached && cached.loaded) {
+      resolve(cached.image);
+      return;
+    }
+
+    const image = new Image();
+
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
+async function drawStrokeOnExport(renderCtx, stroke) {
+  if (stroke.type !== "image") {
+    drawStrokeOn(renderCtx, stroke, 1, 0, 0);
+    return;
+  }
+
+  const p = stroke.points && stroke.points[0];
+  if (!p) return;
+
+  const image = await loadImageForExport(stroke.src);
+
+  if (image) {
+    renderCtx.drawImage(
+      image,
+      p.x,
+      p.y,
+      stroke.width || 240,
+      stroke.height || 160
+    );
+    return;
+  }
+
+  drawStrokeOn(renderCtx, stroke, 1, 0, 0);
+}
+
+exportBtn.addEventListener("click", async () => {
   const exportCanvas = document.createElement("canvas");
   const exportCtx = exportCanvas.getContext("2d");
 
@@ -1484,9 +1797,9 @@ exportBtn.addEventListener("click", () => {
   exportCtx.fillStyle = "#ffffff";
   exportCtx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
-  strokes.forEach((stroke) => {
-    drawStrokeOn(exportCtx, stroke, 1, 0, 0);
-  });
+  for (const stroke of strokes) {
+    await drawStrokeOnExport(exportCtx, stroke);
+  }
 
   if (splitMode) {
     drawSplitLine(exportCtx, 1, 0, 0);
@@ -1566,6 +1879,12 @@ window.addEventListener("keydown", (event) => {
   if (key === "p") setTool("pen");
   if (key === "e") setTool("eraser");
   if (key === "t") setTool("text");
+
+  if (key === "i") {
+    setTool("image");
+    imageInput.click();
+  }
+
   if (key === "l") setTool("line");
   if (key === "r") setTool("rect");
   if (key === "c") setTool("circle");

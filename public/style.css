@@ -163,6 +163,10 @@ canvas.text-cursor {
   cursor: text;
 }
 
+canvas.image-cursor {
+  cursor: copy;
+}
+
 canvas.select-cursor {
   cursor: grab;
 }
