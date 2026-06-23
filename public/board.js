@@ -17,11 +17,21 @@ const redoBtn = document.getElementById("redoBtn");
 const lockBtn = document.getElementById("lockBtn");
 const exportBtn = document.getElementById("exportBtn");
 
+const toolbarToggleBtn = document.getElementById("toolbarToggleBtn");
+const floatingToolbar = document.getElementById("floatingToolbar");
+
+const sidePanel = document.getElementById("sidePanel");
+const sidePanelToggleBtn = document.getElementById("sidePanelToggleBtn");
+const sidePanelCloseBtn = document.getElementById("sidePanelCloseBtn");
+
 const panTool = document.getElementById("panTool");
 const selectTool = document.getElementById("selectTool");
 const penTool = document.getElementById("penTool");
 const eraserTool = document.getElementById("eraserTool");
 const textTool = document.getElementById("textTool");
+
+const shapeMenuBtn = document.getElementById("shapeMenuBtn");
+const shapeMenu = document.getElementById("shapeMenu");
 const lineTool = document.getElementById("lineTool");
 const rectTool = document.getElementById("rectTool");
 const circleTool = document.getElementById("circleTool");
@@ -58,6 +68,8 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 1.15;
 const PAN_MARGIN = 90;
+
+const SHAPE_TOOLS = ["line", "rect", "circle"];
 
 let baseScale = 1;
 let zoom = 1;
@@ -105,6 +117,19 @@ function uid() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isTypingTarget() {
+  const active = document.activeElement;
+  if (!active) return false;
+
+  const tag = active.tagName;
+
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function setStatus(text) {
+  statusText.textContent = text;
 }
 
 function updateZoomLabel() {
@@ -156,7 +181,6 @@ function clampPan() {
 
 function updateCamera() {
   zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
-
   scale = baseScale * zoom;
 
   clampPan();
@@ -171,8 +195,10 @@ function fitView() {
   zoom = 1;
   panX = 0;
   panY = 0;
+
   updateCamera();
   requestRedraw();
+
   setStatus("View disesuaikan ke layar.");
 }
 
@@ -269,12 +295,21 @@ function emitStrokeCancel(stroke) {
   });
 }
 
-function setStatus(text) {
-  statusText.textContent = text;
+function closeShapeMenu() {
+  shapeMenu.classList.remove("open");
+}
+
+function toggleShapeMenu() {
+  shapeMenu.classList.toggle("open");
 }
 
 function setTool(nextTool) {
   tool = nextTool;
+
+  if (!SHAPE_TOOLS.includes(nextTool)) {
+    closeShapeMenu();
+  }
+
   updateToolUI();
 }
 
@@ -293,6 +328,18 @@ function updateToolUI() {
   buttons.forEach(([button, value]) => {
     button.classList.toggle("active", tool === value);
   });
+
+  shapeMenuBtn.classList.toggle("active", SHAPE_TOOLS.includes(tool));
+
+  const shapeLabels = {
+    line: "Line",
+    rect: "Rectangle",
+    circle: "Circle"
+  };
+
+  shapeMenuBtn.textContent = SHAPE_TOOLS.includes(tool)
+    ? shapeLabels[tool]
+    : "Shape";
 
   canvas.classList.toggle("pan-cursor", tool === "pan");
   canvas.classList.toggle("select-cursor", tool === "select");
@@ -1223,6 +1270,7 @@ function handlePointerLeave(event) {
 
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
+  closeShapeMenu();
 
   if (tool === "pan") {
     activePointers[event.pointerId] = true;
@@ -1353,14 +1401,49 @@ canvas.addEventListener(
   { passive: false }
 );
 
+toolbarToggleBtn.addEventListener("click", () => {
+  floatingToolbar.classList.toggle("open");
+});
+
+sidePanelToggleBtn.addEventListener("click", () => {
+  sidePanel.classList.toggle("open");
+});
+
+sidePanelCloseBtn.addEventListener("click", () => {
+  sidePanel.classList.remove("open");
+});
+
 panTool.addEventListener("click", () => setTool("pan"));
 selectTool.addEventListener("click", () => setTool("select"));
 penTool.addEventListener("click", () => setTool("pen"));
 eraserTool.addEventListener("click", () => setTool("eraser"));
 textTool.addEventListener("click", () => setTool("text"));
-lineTool.addEventListener("click", () => setTool("line"));
-rectTool.addEventListener("click", () => setTool("rect"));
-circleTool.addEventListener("click", () => setTool("circle"));
+
+shapeMenuBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleShapeMenu();
+});
+
+lineTool.addEventListener("click", () => {
+  setTool("line");
+  closeShapeMenu();
+});
+
+rectTool.addEventListener("click", () => {
+  setTool("rect");
+  closeShapeMenu();
+});
+
+circleTool.addEventListener("click", () => {
+  setTool("circle");
+  closeShapeMenu();
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".shape-tool-group")) {
+    closeShapeMenu();
+  }
+});
 
 zoomOutBtn.addEventListener("click", () => {
   zoomAtCenter(1 / ZOOM_STEP);
@@ -1463,6 +1546,8 @@ backBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (isTypingTarget()) return;
+
   const key = event.key.toLowerCase();
 
   if (event.code === "Space" && !event.repeat) {
@@ -1512,6 +1597,8 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("keyup", (event) => {
+  if (isTypingTarget()) return;
+
   if (event.code === "Space" && previousToolBeforeSpace) {
     event.preventDefault();
 

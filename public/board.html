@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="board-page">
-  <div class="topbar">
+  <header class="topbar">
     <div class="board-meta">
       <span><strong>Room:</strong> <span id="roomLabel"></span></span>
       <span><strong>User:</strong> <span id="userLabel"></span></span>
@@ -21,44 +21,72 @@
       <button id="lockBtn" type="button">Lock Board</button>
       <button id="splitBtn" type="button">Split Board</button>
       <button id="clearBtn" type="button">Clear Board</button>
+      <button id="sidePanelToggleBtn" type="button">Users</button>
       <button id="backBtn" type="button">Keluar</button>
     </div>
-  </div>
+  </header>
 
-  <div class="toolbar">
-    <button id="panTool" class="tool-btn" type="button">Pan</button>
-    <button id="selectTool" class="tool-btn" type="button">Select</button>
-    <button id="penTool" class="tool-btn active" type="button">Pen</button>
-    <button id="eraserTool" class="tool-btn" type="button">Eraser</button>
-    <button id="textTool" class="tool-btn" type="button">Text</button>
-    <button id="lineTool" class="tool-btn" type="button">Line</button>
-    <button id="rectTool" class="tool-btn" type="button">Rect</button>
-    <button id="circleTool" class="tool-btn" type="button">Circle</button>
+  <div class="board-shell">
+    <main class="board-area">
+      <canvas id="board"></canvas>
 
-    <div class="zoom-controls">
-      <button id="zoomOutBtn" type="button">−</button>
-      <span id="zoomLabel">100%</span>
-      <button id="zoomInBtn" type="button">+</button>
-      <button id="fitViewBtn" type="button">Fit</button>
-    </div>
+      <button id="toolbarToggleBtn" class="toolbar-toggle-btn" type="button">
+        Tools
+      </button>
 
-    <label class="tool-control">
-      Warna
-      <input type="color" id="colorPicker" value="#111827" />
-    </label>
+      <div id="floatingToolbar" class="floating-toolbar">
+        <div class="toolbar-section">
+          <button id="panTool" class="tool-btn" type="button">Pan</button>
+          <button id="selectTool" class="tool-btn" type="button">Select</button>
+          <button id="penTool" class="tool-btn active" type="button">Pen</button>
+          <button id="eraserTool" class="tool-btn" type="button">Eraser</button>
+          <button id="textTool" class="tool-btn" type="button">Text</button>
 
-    <label class="tool-control tool-size">
-      Ukuran
-      <input type="range" id="sizeSlider" min="1" max="18" value="3" />
-      <span id="sizeLabel">3</span>
-    </label>
+          <div class="shape-tool-group">
+            <button id="shapeMenuBtn" class="tool-btn" type="button">Shape</button>
 
-    <span id="statusText" class="status-text">Ready</span>
-  </div>
+            <div id="shapeMenu" class="shape-menu">
+              <button id="lineTool" class="tool-btn shape-option" type="button">Line</button>
+              <button id="rectTool" class="tool-btn shape-option" type="button">Rectangle</button>
+              <button id="circleTool" class="tool-btn shape-option" type="button">Circle</button>
+            </div>
+          </div>
+        </div>
 
-  <div class="main-layout">
-    <aside class="sidebar">
-      <h3>User Aktif</h3>
+        <div class="toolbar-section compact-section">
+          <label class="tool-control color-control">
+            <span>Warna</span>
+            <input type="color" id="colorPicker" value="#111827" />
+          </label>
+
+          <label class="tool-control tool-size">
+            <span>Ukuran</span>
+            <input type="range" id="sizeSlider" min="1" max="18" value="3" />
+            <strong id="sizeLabel">3</strong>
+          </label>
+        </div>
+      </div>
+
+      <div class="zoom-hud">
+        <button id="zoomOutBtn" type="button">−</button>
+        <span id="zoomLabel">100%</span>
+        <button id="zoomInBtn" type="button">+</button>
+        <button id="fitViewBtn" type="button">Fit</button>
+      </div>
+
+      <div id="statusText" class="status-toast">Ready</div>
+    </main>
+
+    <aside id="sidePanel" class="side-panel">
+      <div class="side-panel-header">
+        <div>
+          <h3>User Aktif</h3>
+          <p>Realtime participant list</p>
+        </div>
+
+        <button id="sidePanelCloseBtn" type="button">×</button>
+      </div>
+
       <ul id="userList"></ul>
 
       <div class="hint-box">
@@ -73,14 +101,11 @@
         <p>C = Circle</p>
         <p>0 = Fit View</p>
         <p>+ / - = Zoom</p>
+        <p>Space = Hold Pan</p>
         <p>Ctrl + Z = Undo</p>
         <p>Ctrl + Y = Redo</p>
       </div>
     </aside>
-
-    <main class="board-area">
-      <canvas id="board"></canvas>
-    </main>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
