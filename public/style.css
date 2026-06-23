@@ -2,6 +2,13 @@
   box-sizing: border-box;
 }
 
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --floating-bottom: calc(34px + var(--safe-bottom));
+  --floating-side: 22px;
+}
+
 body {
   margin: 0;
   font-family: Arial, sans-serif;
@@ -10,7 +17,7 @@ body {
 /* DASHBOARD */
 
 .dashboard-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -67,20 +74,20 @@ button:disabled {
 /* BOARD */
 
 .board-page {
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: #e5e7eb;
 }
 
 .topbar {
-  height: 56px;
+  min-height: 56px;
   background: #111827;
   color: white;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 16px;
+  padding: 10px 16px;
   font-size: 14px;
   position: relative;
   z-index: 40;
@@ -100,6 +107,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .topbar button {
@@ -113,7 +121,7 @@ button:disabled {
 }
 
 .board-shell {
-  height: calc(100vh - 56px);
+  height: calc(100dvh - 76px);
   width: 100%;
   position: relative;
   overflow: hidden;
@@ -164,7 +172,7 @@ canvas.select-cursor:active {
 .floating-toolbar {
   position: absolute;
   left: 50%;
-  top: 16px;
+  top: 18px;
   transform: translateX(-50%);
   z-index: 30;
   display: flex;
@@ -265,10 +273,10 @@ canvas.select-cursor:active {
 .toolbar-toggle-btn {
   display: none;
   position: absolute;
-  left: 14px;
-  bottom: 18px;
+  left: var(--floating-side);
+  bottom: var(--floating-bottom);
   z-index: 35;
-  padding: 12px 16px;
+  padding: 13px 18px;
   background: #111827;
   color: white;
   border-radius: 999px;
@@ -279,8 +287,8 @@ canvas.select-cursor:active {
 
 .zoom-hud {
   position: absolute;
-  right: 18px;
-  bottom: 18px;
+  right: var(--floating-side);
+  bottom: var(--floating-bottom);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -294,7 +302,7 @@ canvas.select-cursor:active {
 }
 
 .zoom-hud button {
-  padding: 8px 11px;
+  padding: 9px 12px;
   font-size: 13px;
   background: #111827;
   color: #ffffff;
@@ -305,7 +313,7 @@ canvas.select-cursor:active {
 }
 
 #zoomLabel {
-  min-width: 48px;
+  min-width: 54px;
   text-align: center;
   font-size: 13px;
   color: #111827;
@@ -317,7 +325,7 @@ canvas.select-cursor:active {
 .status-toast {
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  bottom: calc(var(--floating-bottom) + 8px);
   transform: translateX(-50%);
   z-index: 28;
   padding: 9px 14px;
@@ -335,7 +343,7 @@ canvas.select-cursor:active {
   position: absolute;
   top: 16px;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(16px + var(--safe-bottom));
   width: 292px;
   z-index: 32;
   background: rgba(249, 250, 251, 0.96);
@@ -418,7 +426,7 @@ canvas.select-cursor:active {
 /* ADMIN ROOM MANAGEMENT */
 
 .admin-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: #eef2f7;
   color: #111827;
 }
@@ -647,12 +655,17 @@ canvas.select-cursor:active {
 /* RESPONSIVE BOARD */
 
 @media (max-width: 1180px) {
+  :root {
+    --floating-bottom: calc(42px + var(--safe-bottom));
+    --floating-side: 24px;
+  }
+
   .topbar {
+    min-height: 96px;
     height: auto;
-    min-height: 56px;
     flex-direction: column;
     align-items: flex-start;
-    padding: 10px 12px;
+    padding: 12px 16px;
   }
 
   .board-meta {
@@ -665,12 +678,12 @@ canvas.select-cursor:active {
   }
 
   .board-shell {
-    height: calc(100vh - 104px);
+    height: calc(100dvh - 118px);
   }
 
   .floating-toolbar {
-    top: 14px;
-    max-width: calc(100% - 28px);
+    top: 18px;
+    max-width: calc(100% - 32px);
     flex-wrap: wrap;
     justify-content: center;
   }
@@ -679,19 +692,40 @@ canvas.select-cursor:active {
     border-left: none;
     padding-left: 0;
   }
+
+  .status-toast {
+    bottom: calc(var(--floating-bottom) + 74px);
+  }
 }
 
-@media (max-width: 760px) {
-  .board-shell {
-    height: calc(100vh - 132px);
+@media (max-width: 900px) {
+  :root {
+    --floating-bottom: calc(54px + var(--safe-bottom));
+    --floating-side: 26px;
+  }
+
+  .toolbar-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    bottom: var(--floating-bottom);
+  }
+
+  .zoom-hud {
+    bottom: var(--floating-bottom);
+    right: var(--floating-side);
+  }
+
+  .status-toast {
+    bottom: calc(var(--floating-bottom) + 76px);
   }
 
   .floating-toolbar {
-    left: 12px;
-    right: 12px;
+    left: 16px;
+    right: 16px;
     top: auto;
-    bottom: 76px;
-    transform: translateY(130%);
+    bottom: calc(var(--floating-bottom) + 74px);
+    transform: translateY(125%);
     opacity: 0;
     pointer-events: none;
     max-height: 46vh;
@@ -704,12 +738,6 @@ canvas.select-cursor:active {
     transform: translateY(0);
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .toolbar-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 
   .toolbar-section {
@@ -733,14 +761,24 @@ canvas.select-cursor:active {
     top: auto;
     bottom: calc(100% + 10px);
   }
+}
 
-  .zoom-hud {
-    right: 12px;
-    bottom: 18px;
+@media (max-width: 760px) {
+  :root {
+    --floating-bottom: calc(58px + var(--safe-bottom));
+    --floating-side: 18px;
+  }
+
+  .topbar {
+    min-height: 126px;
+  }
+
+  .board-shell {
+    height: calc(100dvh - 140px);
   }
 
   .status-toast {
-    bottom: 74px;
+    bottom: calc(var(--floating-bottom) + 78px);
     max-width: calc(100% - 32px);
     text-align: center;
   }
@@ -748,8 +786,21 @@ canvas.select-cursor:active {
   .side-panel {
     top: 10px;
     right: 10px;
-    bottom: 10px;
+    bottom: calc(10px + var(--safe-bottom));
     width: min(320px, calc(100% - 20px));
+  }
+
+  .zoom-hud {
+    gap: 5px;
+    padding: 7px;
+  }
+
+  .zoom-hud button {
+    padding: 8px 10px;
+  }
+
+  #zoomLabel {
+    min-width: 48px;
   }
 }
 
