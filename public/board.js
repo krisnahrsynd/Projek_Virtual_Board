@@ -450,21 +450,47 @@ function clearScreenOnly(
   oy = offsetY,
   includeOutside = true
 ) {
-  if (includeOutside) {
-    renderCtx.clearRect(0, 0, canvas.width, canvas.height);
+  renderCtx.clearRect(0, 0, canvas.width, canvas.height);
 
+  const boardX = ox;
+  const boardY = oy;
+  const boardW = VIRTUAL_WIDTH * s;
+  const boardH = VIRTUAL_HEIGHT * s;
+
+  const isMainCanvas = renderCtx === ctx;
+  const materialIsShowing = isMainCanvas && hasVisibleMaterial();
+
+  if (includeOutside) {
     renderCtx.fillStyle = "#e5e7eb";
-    renderCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (materialIsShowing) {
+      renderCtx.fillRect(0, 0, canvas.width, Math.max(0, boardY));
+      renderCtx.fillRect(
+        0,
+        boardY + boardH,
+        canvas.width,
+        Math.max(0, canvas.height - (boardY + boardH))
+      );
+      renderCtx.fillRect(0, boardY, Math.max(0, boardX), boardH);
+      renderCtx.fillRect(
+        boardX + boardW,
+        boardY,
+        Math.max(0, canvas.width - (boardX + boardW)),
+        boardH
+      );
+    } else {
+      renderCtx.fillRect(0, 0, canvas.width, canvas.height);
+    }
   }
 
-  if (!hasVisibleMaterial() || renderCtx !== ctx) {
+  if (!materialIsShowing) {
     renderCtx.fillStyle = "#ffffff";
-    renderCtx.fillRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
+    renderCtx.fillRect(boardX, boardY, boardW, boardH);
   }
 
   renderCtx.strokeStyle = "#111827";
   renderCtx.lineWidth = Math.max(1, 2 * s);
-  renderCtx.strokeRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
+  renderCtx.strokeRect(boardX, boardY, boardW, boardH);
 }
 
 function drawSplitLine(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY) {
