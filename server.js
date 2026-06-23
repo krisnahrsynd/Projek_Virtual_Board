@@ -10,12 +10,14 @@ app.use(express.static("public"));
 
 const rooms = {};
 
-function createRoomIfNotExists(roomId) {
+function createRoom(roomId) {
   if (!rooms[roomId]) {
     rooms[roomId] = {
       users: {},
-      splitMode: false,
-      strokes: []
+      strokes: {}, // MAP instead of array
+      history: [], // for undo
+      redoStack: [],
+      splitMode: false
     };
   }
 }
@@ -26,70 +28,90 @@ function getRoomUsers(roomId) {
 }
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("connected", socket.id);
 
-  socket.on("join-room", (data) => {
-    const { roomId, username, role } = data;
-
-    createRoomIfNotExists(roomId);
+  socket.on("join-room", ({ roomId, username, role }) => {
+    createRoom(roomId);
 
     socket.join(roomId);
-
     socket.roomId = roomId;
-    socket.username = username;
     socket.role = role;
 
-    rooms[roomId].users[socket.id] = {
-      id: socket.id,
-      username,
-      role
-    };
+    rooms[roomId].users[socket.id] = { username, role };
 
     socket.emit("board-state", {
-      strokes: rooms[roomId].strokes,
+      strokes: Object.values(rooms[roomId].strokes),
       splitMode: rooms[roomId].splitMode
     });
 
     io.to(roomId).emit("room-users", getRoomUsers(roomId));
   });
 
-  // stroke realtime
-  socket.on("draw", (stroke) => {
-    const roomId = stroke.roomId;
-    createRoomIfNotExists(roomId);
+  // CREATE / UPDATE STROKE
+  socket.on("stroke", (stroke) => {
+    const room = rooms[stroke.roomId];
+    if (!room) return;
 
-    rooms[roomId].strokes.push(stroke);
+    room.strokes[stroke.id] = stroke;
+    room.history.push(stroke.id);
 
-    socket.to(roomId).emit("draw", stroke);
+    io.to(stroke.roomId).emit("stroke", stroke);
+  });
+
+  // DELETE STROKE (ERASER)
+  socket.on("erase", ({ roomId, strokeId }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+
+    delete room.strokes[strokeId];
+
+    io.to(roomId).emit("erase", strokeId);
+  });
+
+  // UNDO
+  socket.on("undo", (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.history.length === 0) return;
+
+    const lastId = room.history.pop();
+    const stroke = room.strokes[lastId];
+
+    if (stroke) {
+      delete room.strokes[lastId];
+      room.redoStack.push(stroke);
+      io.to(roomId).emit("erase", lastId);
+    }
+  });
+
+  // REDO
+  socket.on("redo", (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.redoStack.length === 0) return;
+
+    const stroke = room.redoStack.pop();
+    room.strokes[stroke.id] = stroke;
+    room.history.push(stroke.id);
+
+    io.to(roomId).emit("stroke", stroke);
   });
 
   socket.on("clear", (roomId) => {
-    createRoomIfNotExists(roomId);
+    createRoom(roomId);
 
-    rooms[roomId].strokes = [];
+    rooms[roomId].strokes = {};
+    rooms[roomId].history = [];
+    rooms[roomId].redoStack = [];
+
     io.to(roomId).emit("clear");
-  });
-
-  socket.on("split-board", (data) => {
-    const { roomId, splitMode } = data;
-
-    createRoomIfNotExists(roomId);
-
-    rooms[roomId].splitMode = splitMode;
-
-    io.to(roomId).emit("split-board", { splitMode });
   });
 
   socket.on("disconnect", () => {
     const roomId = socket.roomId;
+    if (!roomId || !rooms[roomId]) return;
 
-    if (roomId && rooms[roomId]) {
-      delete rooms[roomId].users[socket.id];
-      io.to(roomId).emit("room-users", getRoomUsers(roomId));
-    }
+    delete rooms[roomId].users[socket.id];
+    io.to(roomId).emit("room-users", getRoomUsers(roomId));
   });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("Server running on port", process.env.PORT || 3000);
-});
+server.listen(3000, () => console.log("running"));
