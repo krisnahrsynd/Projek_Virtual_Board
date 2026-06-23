@@ -1,5 +1,10 @@
 const socket = io();
 
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
 const params = new URLSearchParams(window.location.search);
 
 const roomId = params.get("room") || "default";
@@ -10,6 +15,9 @@ const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 const boardArea = document.querySelector(".board-area");
 
+const pdfCanvas = document.getElementById("pdfCanvas");
+const pdfCtx = pdfCanvas.getContext("2d");
+
 const splitBtn = document.getElementById("splitBtn");
 const clearBtn = document.getElementById("clearBtn");
 const backBtn = document.getElementById("backBtn");
@@ -17,6 +25,7 @@ const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const lockBtn = document.getElementById("lockBtn");
 const exportBtn = document.getElementById("exportBtn");
+const exportAnnotatedPdfBtn = document.getElementById("exportAnnotatedPdfBtn");
 
 const toolbarToggleBtn = document.getElementById("toolbarToggleBtn");
 const floatingToolbar = document.getElementById("floatingToolbar");
@@ -46,8 +55,10 @@ const materialOpenLink = document.getElementById("materialOpenLink");
 const materialBadge = document.getElementById("materialBadge");
 const materialName = document.getElementById("materialName");
 const materialOpenBtn = document.getElementById("materialOpenBtn");
-const materialScrollBtn = document.getElementById("materialScrollBtn");
 const materialHideBtn = document.getElementById("materialHideBtn");
+const materialPrevBtn = document.getElementById("materialPrevBtn");
+const materialNextBtn = document.getElementById("materialNextBtn");
+const materialPageLabel = document.getElementById("materialPageLabel");
 
 const shapeMenuBtn = document.getElementById("shapeMenuBtn");
 const shapeMenu = document.getElementById("shapeMenu");
@@ -108,8 +119,14 @@ let locked = false;
 
 let materials = [];
 let currentMaterial = null;
+let currentMaterialPage = 1;
 let materialVisible = true;
-let materialScrollMode = false;
+
+let pdfDoc = null;
+let pdfPageCount = 1;
+let pdfPageLayout = null;
+let pdfRenderTask = null;
+let lastPdfRenderKey = "";
 
 let tool = "pen";
 let previousToolBeforeSpace = null;
@@ -157,25 +174,46 @@ function setStatus(text) {
   statusText.textContent = text;
 }
 
-function updateZoomLabel() {
-  zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+function isPdfMaterial(material) {
+  if (!material) return false;
+
+  const name = String(material.filename || "").toLowerCase();
+  const mime = String(material.mimeType || "").toLowerCase();
+
+  return mime === "application/pdf" || name.endsWith(".pdf");
 }
 
-function setMaterialScrollMode(enabled) {
-  const next = Boolean(enabled && currentMaterial && materialVisible);
-
-  materialScrollMode = next;
-  boardArea.classList.toggle("material-scroll-mode", materialScrollMode);
-
-  if (materialScrollBtn) {
-    materialScrollBtn.textContent = materialScrollMode ? "Annotate" : "Scroll";
+function getActiveAnnotationContext() {
+  if (currentMaterial && materialVisible && isPdfMaterial(currentMaterial)) {
+    return {
+      materialId: currentMaterial.id,
+      pageNumber: currentMaterialPage
+    };
   }
 
-  if (materialScrollMode) {
-    setStatus("Mode scroll materi aktif. Klik Annotate untuk mencoret lagi.");
-  } else {
-    updateToolUI();
-  }
+  return {
+    materialId: null,
+    pageNumber: null
+  };
+}
+
+function isStrokeVisibleInCurrentContext(stroke) {
+  if (!stroke.materialId) return true;
+
+  if (!currentMaterial || !materialVisible) return false;
+
+  return (
+    stroke.materialId === currentMaterial.id &&
+    Number(stroke.pageNumber || 1) === Number(currentMaterialPage || 1)
+  );
+}
+
+function getVisibleStrokes() {
+  return strokes.filter(isStrokeVisibleInCurrentContext);
+}
+
+function updateZoomLabel() {
+  zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
 }
 
 function getCenteredOffsetX() {
@@ -356,8 +394,6 @@ function toggleShapeMenu() {
 }
 
 function setTool(nextTool) {
-  setMaterialScrollMode(false);
-
   tool = nextTool;
 
   if (!SHAPE_TOOLS.includes(nextTool)) {
@@ -485,19 +521,9 @@ function clearScreenOnly(
 
     if (materialIsShowing) {
       renderCtx.fillRect(0, 0, canvas.width, Math.max(0, boardY));
-      renderCtx.fillRect(
-        0,
-        boardY + boardH,
-        canvas.width,
-        Math.max(0, canvas.height - (boardY + boardH))
-      );
+      renderCtx.fillRect(0, boardY + boardH, canvas.width, Math.max(0, canvas.height - (boardY + boardH)));
       renderCtx.fillRect(0, boardY, Math.max(0, boardX), boardH);
-      renderCtx.fillRect(
-        boardX + boardW,
-        boardY,
-        Math.max(0, canvas.width - (boardX + boardW)),
-        boardH
-      );
+      renderCtx.fillRect(boardX + boardW, boardY, Math.max(0, canvas.width - (boardX + boardW)), boardH);
     } else {
       renderCtx.fillRect(0, 0, canvas.width, canvas.height);
     }
@@ -519,10 +545,7 @@ function drawSplitLine(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY) {
   renderCtx.save();
   renderCtx.beginPath();
   renderCtx.moveTo(ox + (VIRTUAL_WIDTH / 2) * s, oy);
-  renderCtx.lineTo(
-    ox + (VIRTUAL_WIDTH / 2) * s,
-    oy + VIRTUAL_HEIGHT * s
-  );
+  renderCtx.lineTo(ox + (VIRTUAL_WIDTH / 2) * s, oy + VIRTUAL_HEIGHT * s);
   renderCtx.strokeStyle = "#ef4444";
   renderCtx.lineWidth = Math.max(1, 2 * s);
   renderCtx.setLineDash([10 * s, 10 * s]);
@@ -536,21 +559,12 @@ function drawLockedOverlay() {
   ctx.save();
 
   ctx.fillStyle = "rgba(17, 24, 39, 0.08)";
-  ctx.fillRect(
-    offsetX,
-    offsetY,
-    VIRTUAL_WIDTH * scale,
-    VIRTUAL_HEIGHT * scale
-  );
+  ctx.fillRect(offsetX, offsetY, VIRTUAL_WIDTH * scale, VIRTUAL_HEIGHT * scale);
 
   ctx.fillStyle = "#111827";
   ctx.font = `${18 * scale}px Arial`;
   ctx.textAlign = "center";
-  ctx.fillText(
-    "BOARD LOCKED",
-    offsetX + (VIRTUAL_WIDTH * scale) / 2,
-    offsetY + 34 * scale
-  );
+  ctx.fillText("BOARD LOCKED", offsetX + (VIRTUAL_WIDTH * scale) / 2, offsetY + 34 * scale);
 
   ctx.restore();
 }
@@ -622,30 +636,17 @@ function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
 
   if (pts.length === 1) {
     renderCtx.beginPath();
-    renderCtx.arc(
-      ox + pts[0].x * s,
-      oy + pts[0].y * s,
-      strokeSize / 2,
-      0,
-      Math.PI * 2
-    );
+    renderCtx.arc(ox + pts[0].x * s, oy + pts[0].y * s, strokeSize / 2, 0, Math.PI * 2);
     renderCtx.fill();
     renderCtx.restore();
     return;
   }
 
   renderCtx.beginPath();
-
-  renderCtx.moveTo(
-    ox + pts[0].x * s,
-    oy + pts[0].y * s
-  );
+  renderCtx.moveTo(ox + pts[0].x * s, oy + pts[0].y * s);
 
   if (pts.length === 2) {
-    renderCtx.lineTo(
-      ox + pts[1].x * s,
-      oy + pts[1].y * s
-    );
+    renderCtx.lineTo(ox + pts[1].x * s, oy + pts[1].y * s);
   } else {
     for (let i = 1; i < pts.length - 1; i++) {
       const current = pts[i];
@@ -663,11 +664,7 @@ function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
     }
 
     const last = pts[pts.length - 1];
-
-    renderCtx.lineTo(
-      ox + last.x * s,
-      oy + last.y * s
-    );
+    renderCtx.lineTo(ox + last.x * s, oy + last.y * s);
   }
 
   renderCtx.stroke();
@@ -687,7 +684,6 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
   renderCtx.lineWidth = Math.max(1, (stroke.size || 3) * s);
   renderCtx.lineCap = "round";
   renderCtx.lineJoin = "round";
-
   renderCtx.beginPath();
 
   if (stroke.shape === "line") {
@@ -700,7 +696,6 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
     const y = Math.min(a.y, b.y);
     const w = Math.abs(b.x - a.x);
     const h = Math.abs(b.y - a.y);
-
     renderCtx.rect(ox + x * s, oy + y * s, w * s, h * s);
   }
 
@@ -710,15 +705,7 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
     const rx = Math.abs(b.x - a.x) / 2;
     const ry = Math.abs(b.y - a.y) / 2;
 
-    renderCtx.ellipse(
-      ox + cx * s,
-      oy + cy * s,
-      rx * s,
-      ry * s,
-      0,
-      0,
-      Math.PI * 2
-    );
+    renderCtx.ellipse(ox + cx * s, oy + cy * s, rx * s, ry * s, 0, 0, Math.PI * 2);
   }
 
   renderCtx.stroke();
@@ -744,11 +731,7 @@ function drawTextStroke(renderCtx, stroke, s, ox, oy) {
   const lineHeight = fontSize * 1.25;
 
   lines.forEach((line, index) => {
-    renderCtx.fillText(
-      line,
-      ox + p.x * s,
-      oy + (p.y + index * lineHeight) * s
-    );
+    renderCtx.fillText(line, ox + p.x * s, oy + (p.y + index * lineHeight) * s);
   });
 
   renderCtx.restore();
@@ -847,8 +830,10 @@ function drawRemoteCursors() {
 function redrawAll() {
   clearScreenOnly();
 
-  strokes.forEach((stroke) => drawStrokeOn(ctx, stroke));
-  Object.values(activeRemoteStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
+  getVisibleStrokes().forEach((stroke) => drawStrokeOn(ctx, stroke));
+  Object.values(activeRemoteStrokes).forEach((stroke) => {
+    if (isStrokeVisibleInCurrentContext(stroke)) drawStrokeOn(ctx, stroke);
+  });
   Object.values(activeStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
   Object.values(activeShapes).forEach((stroke) => drawStrokeOn(ctx, stroke));
 
@@ -872,7 +857,6 @@ function requestRedraw() {
 function distance(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
-
   return Math.sqrt(dx * dx + dy * dy);
 }
 
@@ -907,9 +891,7 @@ function getShapeSegments(stroke) {
   const a = pts[0];
   const b = pts[1];
 
-  if (stroke.shape === "line") {
-    return [[a, b]];
-  }
+  if (stroke.shape === "line") return [[a, b]];
 
   if (stroke.shape === "rect") {
     const x1 = Math.min(a.x, b.x);
@@ -922,12 +904,7 @@ function getShapeSegments(stroke) {
     const p3 = { x: x2, y: y2 };
     const p4 = { x: x1, y: y2 };
 
-    return [
-      [p1, p2],
-      [p2, p3],
-      [p3, p4],
-      [p4, p1]
-    ];
+    return [[p1, p2], [p2, p3], [p3, p4], [p4, p1]];
   }
 
   if (stroke.shape === "circle") {
@@ -944,14 +921,8 @@ function getShapeSegments(stroke) {
       const t2 = ((i + 1) / steps) * Math.PI * 2;
 
       segments.push([
-        {
-          x: cx + Math.cos(t1) * rx,
-          y: cy + Math.sin(t1) * ry
-        },
-        {
-          x: cx + Math.cos(t2) * rx,
-          y: cy + Math.sin(t2) * ry
-        }
+        { x: cx + Math.cos(t1) * rx, y: cy + Math.sin(t1) * ry },
+        { x: cx + Math.cos(t2) * rx, y: cy + Math.sin(t2) * ry }
       ]);
     }
 
@@ -973,12 +944,7 @@ function getVirtualTextBox(stroke) {
   const width = maxLength * fontSize * 0.62;
   const height = lines.length * fontSize * 1.25;
 
-  return {
-    x: p.x,
-    y: p.y,
-    width,
-    height
-  };
+  return { x: p.x, y: p.y, width, height };
 }
 
 function getSelectedStroke() {
@@ -991,19 +957,12 @@ function getStrokeBounds(stroke) {
   if (stroke.type === "text") {
     const box = getVirtualTextBox(stroke);
     if (!box) return null;
-
-    return {
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height
-    };
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
   }
 
   if (stroke.type === "image") {
     const p = stroke.points && stroke.points[0];
     if (!p) return null;
-
     return {
       x: p.x,
       y: p.y,
@@ -1013,7 +972,6 @@ function getStrokeBounds(stroke) {
   }
 
   const pts = stroke.points || [];
-
   if (pts.length === 0) return null;
 
   let minX = pts[0].x;
@@ -1040,8 +998,10 @@ function getStrokeBounds(stroke) {
 
 function drawSelectionBox() {
   const stroke = getSelectedStroke();
-  const bounds = getStrokeBounds(stroke);
 
+  if (stroke && !isStrokeVisibleInCurrentContext(stroke)) return;
+
+  const bounds = getStrokeBounds(stroke);
   if (!bounds) return;
 
   const x = offsetX + bounds.x * scale;
@@ -1061,20 +1021,8 @@ function drawSelectionBox() {
 
   const handleSize = 8;
 
-  const handles = [
-    [x, y],
-    [x + w, y],
-    [x, y + h],
-    [x + w, y + h]
-  ];
-
-  handles.forEach(([hx, hy]) => {
-    ctx.fillRect(
-      hx - handleSize / 2,
-      hy - handleSize / 2,
-      handleSize,
-      handleSize
-    );
+  [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([hx, hy]) => {
+    ctx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
   });
 
   ctx.restore();
@@ -1113,27 +1061,18 @@ function strokeHitTest(stroke, point, radius) {
     const threshold = radius + (stroke.size || 3) / 2;
     const segments = getShapeSegments(stroke);
 
-    return segments.some(([a, b]) => {
-      return distancePointToSegment(point, a, b) <= threshold;
-    });
+    return segments.some(([a, b]) => distancePointToSegment(point, a, b) <= threshold);
   }
 
   const pts = stroke.points || [];
-
   if (pts.length === 0) return false;
 
   const threshold = radius + (stroke.size || 3) / 2;
 
-  if (pts.length === 1) {
-    return distance(point, pts[0]) <= threshold;
-  }
+  if (pts.length === 1) return distance(point, pts[0]) <= threshold;
 
   for (let i = 0; i < pts.length - 1; i++) {
-    const d = distancePointToSegment(point, pts[i], pts[i + 1]);
-
-    if (d <= threshold) {
-      return true;
-    }
+    if (distancePointToSegment(point, pts[i], pts[i + 1]) <= threshold) return true;
   }
 
   return false;
@@ -1141,15 +1080,14 @@ function strokeHitTest(stroke, point, radius) {
 
 function findSelectableStrokeAt(pos) {
   const radius = Math.max(8, Number(sizeSlider.value) * 2);
+  const visibleStrokes = getVisibleStrokes();
 
-  for (let i = strokes.length - 1; i >= 0; i--) {
-    const stroke = strokes[i];
+  for (let i = visibleStrokes.length - 1; i >= 0; i--) {
+    const stroke = visibleStrokes[i];
 
     if (!canEraseLocal(stroke)) continue;
 
-    if (strokeHitTest(stroke, pos, radius)) {
-      return stroke;
-    }
+    if (strokeHitTest(stroke, pos, radius)) return stroke;
   }
 
   return null;
@@ -1166,7 +1104,6 @@ function moveStrokeBy(stroke, dx, dy) {
 
 function clampStrokeInsideBoard(stroke) {
   const bounds = getStrokeBounds(stroke);
-
   if (!bounds) return;
 
   let dx = 0;
@@ -1183,9 +1120,7 @@ function clampStrokeInsideBoard(stroke) {
     dy = VIRTUAL_HEIGHT - (bounds.y + bounds.height);
   }
 
-  if (dx !== 0 || dy !== 0) {
-    moveStrokeBy(stroke, dx, dy);
-  }
+  if (dx !== 0 || dy !== 0) moveStrokeBy(stroke, dx, dy);
 }
 
 function startSelectionDrag(pointerId, pos, stroke) {
@@ -1197,12 +1132,7 @@ function startSelectionDrag(pointerId, pos, stroke) {
     return;
   }
 
-  draggingSelection = {
-    pointerId,
-    lastPos: pos,
-    moved: false
-  };
-
+  draggingSelection = { pointerId, lastPos: pos, moved: false };
   requestRedraw();
 }
 
@@ -1211,7 +1141,6 @@ function updateSelectionDrag(pointerId, pos) {
   if (draggingSelection.pointerId !== pointerId) return;
 
   const stroke = getSelectedStroke();
-
   if (!stroke) return;
 
   const dx = pos.x - draggingSelection.lastPos.x;
@@ -1237,7 +1166,6 @@ function finishSelectionDrag(pointerId) {
   }
 
   draggingSelection = null;
-
   requestRedraw();
 
   return true;
@@ -1245,35 +1173,39 @@ function finishSelectionDrag(pointerId) {
 
 function eraseAt(pos) {
   const eraserRadius = Math.max(10, Number(sizeSlider.value) * 3);
+  const visibleStrokes = getVisibleStrokes();
   let removed = false;
 
-  for (let i = strokes.length - 1; i >= 0; i--) {
-    const stroke = strokes[i];
+  for (let i = visibleStrokes.length - 1; i >= 0; i--) {
+    const stroke = visibleStrokes[i];
 
     if (!canEraseLocal(stroke)) continue;
 
     if (strokeHitTest(stroke, pos, eraserRadius)) {
       const strokeId = stroke.id;
 
-      strokes.splice(i, 1);
+      strokes = strokes.filter((item) => item.id !== strokeId);
 
-      socket.emit("erase-stroke", {
-        roomId,
-        strokeId
-      });
+      socket.emit("erase-stroke", { roomId, strokeId });
 
-      if (selectedStrokeId === strokeId) {
-        selectedStrokeId = null;
-      }
+      if (selectedStrokeId === strokeId) selectedStrokeId = null;
 
       removed = true;
       break;
     }
   }
 
-  if (removed) {
-    requestRedraw();
-  }
+  if (removed) requestRedraw();
+}
+
+function withAnnotationContext(baseStroke) {
+  const context = getActiveAnnotationContext();
+
+  return {
+    ...baseStroke,
+    materialId: context.materialId,
+    pageNumber: context.pageNumber
+  };
 }
 
 function createTextAt(pos) {
@@ -1284,7 +1216,7 @@ function createTextAt(pos) {
     return;
   }
 
-  const stroke = {
+  const stroke = withAnnotationContext({
     id: uid(),
     roomId,
     username,
@@ -1297,10 +1229,9 @@ function createTextAt(pos) {
     fontSize: Math.max(16, Number(sizeSlider.value) * 5 + 14),
     points: [pos],
     createdAt: Date.now()
-  };
+  });
 
   strokes.push(stroke);
-
   socket.emit("stroke-add", stroke);
 
   requestRedraw();
@@ -1315,24 +1246,16 @@ function compressImageFile(file) {
 
     const reader = new FileReader();
 
-    reader.onerror = () => {
-      reject(new Error("Gagal membaca file gambar."));
-    };
+    reader.onerror = () => reject(new Error("Gagal membaca file gambar."));
 
     reader.onload = () => {
       const image = new Image();
 
-      image.onerror = () => {
-        reject(new Error("Gagal memproses gambar."));
-      };
+      image.onerror = () => reject(new Error("Gagal memproses gambar."));
 
       image.onload = () => {
         const maxDimension = 1400;
-        const ratio = Math.min(
-          1,
-          maxDimension / image.naturalWidth,
-          maxDimension / image.naturalHeight
-        );
+        const ratio = Math.min(1, maxDimension / image.naturalWidth, maxDimension / image.naturalHeight);
 
         const width = Math.max(1, Math.round(image.naturalWidth * ratio));
         const height = Math.max(1, Math.round(image.naturalHeight * ratio));
@@ -1352,9 +1275,7 @@ function compressImageFile(file) {
         resolve({
           src,
           naturalWidth: image.naturalWidth,
-          naturalHeight: image.naturalHeight,
-          compressedWidth: width,
-          compressedHeight: height
+          naturalHeight: image.naturalHeight
         });
       };
 
@@ -1369,11 +1290,7 @@ function getImageDisplaySize(naturalWidth, naturalHeight) {
   const maxWidth = VIRTUAL_WIDTH * 0.45;
   const maxHeight = VIRTUAL_HEIGHT * 0.55;
 
-  const ratio = Math.min(
-    1,
-    maxWidth / naturalWidth,
-    maxHeight / naturalHeight
-  );
+  const ratio = Math.min(1, maxWidth / naturalWidth, maxHeight / naturalHeight);
 
   return {
     width: Math.max(60, naturalWidth * ratio),
@@ -1393,26 +1310,13 @@ async function addImageFileToBoard(file) {
       return;
     }
 
-    const displaySize = getImageDisplaySize(
-      imageData.naturalWidth,
-      imageData.naturalHeight
-    );
-
+    const displaySize = getImageDisplaySize(imageData.naturalWidth, imageData.naturalHeight);
     const center = getVisibleCenterVirtual();
 
-    const x = clamp(
-      center.x - displaySize.width / 2,
-      0,
-      VIRTUAL_WIDTH - displaySize.width
-    );
+    const x = clamp(center.x - displaySize.width / 2, 0, VIRTUAL_WIDTH - displaySize.width);
+    const y = clamp(center.y - displaySize.height / 2, 0, VIRTUAL_HEIGHT - displaySize.height);
 
-    const y = clamp(
-      center.y - displaySize.height / 2,
-      0,
-      VIRTUAL_HEIGHT - displaySize.height
-    );
-
-    const stroke = {
+    const stroke = withAnnotationContext({
       id: uid(),
       roomId,
       username,
@@ -1424,7 +1328,7 @@ async function addImageFileToBoard(file) {
       height: displaySize.height,
       points: [{ x, y }],
       createdAt: Date.now()
-    };
+    });
 
     strokes.push(stroke);
     selectedStrokeId = stroke.id;
@@ -1446,10 +1350,8 @@ async function addImageFileToBoard(file) {
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
     reader.onerror = () => reject(new Error("Gagal membaca file."));
     reader.onload = () => resolve(reader.result);
-
     reader.readAsDataURL(file);
   });
 }
@@ -1482,26 +1384,18 @@ async function uploadMaterialFile(file) {
 
     const response = await fetch("/api/materials/upload", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        roomId,
-        username,
-        role,
-        filename: file.name,
-        dataUrl
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roomId, username, role, filename: file.name, dataUrl })
     });
 
     const result = await response.json();
 
-    if (!response.ok) {
-      throw new Error(result.error || "Gagal upload materi.");
-    }
+    if (!response.ok) throw new Error(result.error || "Gagal upload materi.");
 
     materials = result.materials || [];
-    setCurrentMaterial(result.material, true);
+    currentMaterialPage = result.currentMaterialPage || 1;
+
+    await setCurrentMaterial(result.material, true, currentMaterialPage);
 
     sidePanel.classList.add("open");
     renderMaterialList();
@@ -1523,13 +1417,10 @@ function getMaterialViewerUrl(material) {
   if (!material) return "";
 
   const url = absoluteUrl(material.url);
-
   const name = String(material.filename || "").toLowerCase();
   const mime = String(material.mimeType || "").toLowerCase();
 
-  if (mime === "application/pdf" || name.endsWith(".pdf")) {
-    return material.url;
-  }
+  if (mime === "application/pdf" || name.endsWith(".pdf")) return material.url;
 
   if (name.endsWith(".ppt") || name.endsWith(".pptx") || mime.includes("powerpoint")) {
     return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
@@ -1538,26 +1429,165 @@ function getMaterialViewerUrl(material) {
   return material.url;
 }
 
-function setCurrentMaterial(material, visible = true) {
-  currentMaterial = material || null;
-  materialVisible = Boolean(material && visible);
-
-  if (!currentMaterial || !materialVisible) {
-    setMaterialScrollMode(false);
+async function loadPdfDoc(material) {
+  if (!window.pdfjsLib) {
+    throw new Error("PDF.js belum termuat.");
   }
 
-  renderMaterialViewer();
+  if (pdfDoc && currentMaterial && material && currentMaterial.id === material.id) {
+    return pdfDoc;
+  }
+
+  pdfDoc = await pdfjsLib.getDocument(material.url).promise;
+  pdfPageCount = pdfDoc.numPages || 1;
+  return pdfDoc;
+}
+
+function getPdfPageLayout(page) {
+  const viewport = page.getViewport({ scale: 1 });
+  const fit = Math.min(VIRTUAL_WIDTH / viewport.width, VIRTUAL_HEIGHT / viewport.height);
+
+  const width = viewport.width * fit;
+  const height = viewport.height * fit;
+
+  return {
+    x: (VIRTUAL_WIDTH - width) / 2,
+    y: (VIRTUAL_HEIGHT - height) / 2,
+    width,
+    height,
+    fit,
+    originalWidth: viewport.width,
+    originalHeight: viewport.height
+  };
+}
+
+async function renderCurrentPdfPage(force = false) {
+  if (!currentMaterial || !isPdfMaterial(currentMaterial) || !materialVisible) return;
+
+  try {
+    const doc = await loadPdfDoc(currentMaterial);
+
+    currentMaterialPage = clamp(currentMaterialPage, 1, doc.numPages || 1);
+    pdfPageCount = doc.numPages || 1;
+
+    const page = await doc.getPage(currentMaterialPage);
+    const layout = getPdfPageLayout(page);
+
+    pdfPageLayout = layout;
+
+    const renderKey = `${currentMaterial.id}-${currentMaterialPage}-${Math.round(scale * 1000)}`;
+
+    positionPdfCanvas(layout);
+
+    if (!force && lastPdfRenderKey === renderKey) {
+      updateMaterialPageLabel();
+      return;
+    }
+
+    lastPdfRenderKey = renderKey;
+
+    if (pdfRenderTask) {
+      try {
+        pdfRenderTask.cancel();
+      } catch (error) {
+        // aman diabaikan
+      }
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const viewport = page.getViewport({ scale: layout.fit * scale * dpr });
+
+    pdfCanvas.width = Math.max(1, Math.round(viewport.width));
+    pdfCanvas.height = Math.max(1, Math.round(viewport.height));
+
+    pdfCanvas.style.width = `${layout.width * scale}px`;
+    pdfCanvas.style.height = `${layout.height * scale}px`;
+
+    pdfCtx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+
+    pdfRenderTask = page.render({
+      canvasContext: pdfCtx,
+      viewport
+    });
+
+    await pdfRenderTask.promise;
+
+    pdfRenderTask = null;
+    updateMaterialPageLabel();
+  } catch (error) {
+    if (error && error.name === "RenderingCancelledException") return;
+
+    console.error(error);
+    setStatus("Gagal render halaman PDF.");
+  }
+}
+
+function positionPdfCanvas(layout = pdfPageLayout) {
+  if (!layout) return;
+
+  pdfCanvas.style.left = `${layout.x * scale}px`;
+  pdfCanvas.style.top = `${layout.y * scale}px`;
+  pdfCanvas.style.width = `${layout.width * scale}px`;
+  pdfCanvas.style.height = `${layout.height * scale}px`;
+}
+
+function updateMaterialPageLabel() {
+  if (!currentMaterial) {
+    materialPageLabel.textContent = "-";
+    return;
+  }
+
+  if (isPdfMaterial(currentMaterial)) {
+    materialPageLabel.textContent = `${currentMaterialPage} / ${pdfPageCount || 1}`;
+    materialPrevBtn.disabled = currentMaterialPage <= 1;
+    materialNextBtn.disabled = currentMaterialPage >= pdfPageCount;
+  } else {
+    materialPageLabel.textContent = "PPT";
+    materialPrevBtn.disabled = true;
+    materialNextBtn.disabled = true;
+  }
+}
+
+async function syncMaterialPage(pageNumber) {
+  if (!currentMaterial) return;
+
+  currentMaterialPage = clamp(pageNumber, 1, pdfPageCount || 1);
+
+  await fetch("/api/materials/set-page", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      roomId,
+      materialId: currentMaterial.id,
+      pageNumber: currentMaterialPage
+    })
+  });
+}
+
+async function setCurrentMaterial(material, visible = true, pageNumber = 1) {
+  currentMaterial = material || null;
+  materialVisible = Boolean(material && visible);
+  currentMaterialPage = Math.max(1, Number(pageNumber) || 1);
+
+  if (!currentMaterial || !materialVisible) {
+    pdfDoc = null;
+    pdfPageCount = 1;
+    pdfPageLayout = null;
+    lastPdfRenderKey = "";
+  }
+
+  await renderMaterialViewer();
   renderMaterialList();
   requestRedraw();
 }
 
-function renderMaterialViewer() {
+async function renderMaterialViewer() {
   if (!currentMaterial || !materialVisible) {
     materialLayer.classList.add("hidden");
     materialBadge.classList.add("hidden");
     materialFrame.removeAttribute("src");
     materialOpenLink.href = "#";
-    setMaterialScrollMode(false);
+    pdfCanvas.style.display = "none";
     return;
   }
 
@@ -1568,18 +1598,27 @@ function renderMaterialViewer() {
   materialOpenLink.href = currentMaterial.url;
   materialOpenBtn.dataset.url = currentMaterial.url;
 
-  const viewerUrl = getMaterialViewerUrl(currentMaterial);
-
-  materialFrame.src = viewerUrl;
-
   const lowerName = String(currentMaterial.filename || "").toLowerCase();
 
-  if (lowerName.endsWith(".ppt") || lowerName.endsWith(".pptx")) {
-    materialFallback.classList.remove("hidden");
-    materialFallbackText.textContent =
-      "Preview PPT/PPTX memakai Office Web Viewer. Jika belum tampil, klik Open Material.";
-  } else {
+  if (isPdfMaterial(currentMaterial)) {
+    materialFrame.style.display = "none";
     materialFallback.classList.add("hidden");
+    pdfCanvas.style.display = "block";
+    await renderCurrentPdfPage(true);
+  } else {
+    pdfCanvas.style.display = "none";
+    materialFrame.style.display = "block";
+    materialFrame.src = getMaterialViewerUrl(currentMaterial);
+
+    if (lowerName.endsWith(".ppt") || lowerName.endsWith(".pptx")) {
+      materialFallback.classList.remove("hidden");
+      materialFallbackText.textContent =
+        "Preview PPT/PPTX memakai Office Web Viewer. Untuk anotasi per halaman dan export PDF, konversi PPT ke PDF terlebih dahulu.";
+    } else {
+      materialFallback.classList.add("hidden");
+    }
+
+    updateMaterialPageLabel();
   }
 
   positionMaterialLayer();
@@ -1592,6 +1631,14 @@ function positionMaterialLayer() {
   materialStage.style.top = `${offsetY}px`;
   materialStage.style.width = `${VIRTUAL_WIDTH * scale}px`;
   materialStage.style.height = `${VIRTUAL_HEIGHT * scale}px`;
+
+  if (currentMaterial && isPdfMaterial(currentMaterial)) {
+    positionPdfCanvas();
+
+    if (pdfDoc) {
+      renderCurrentPdfPage();
+    }
+  }
 }
 
 function renderMaterialList() {
@@ -1612,9 +1659,7 @@ function renderMaterialList() {
       const item = document.createElement("div");
       item.className = "material-item";
 
-      if (currentMaterial && currentMaterial.id === material.id) {
-        item.classList.add("active");
-      }
+      if (currentMaterial && currentMaterial.id === material.id) item.classList.add("active");
 
       const info = document.createElement("div");
       info.className = "material-info";
@@ -1637,13 +1682,8 @@ function renderMaterialList() {
       showBtn.addEventListener("click", async () => {
         const response = await fetch("/api/materials/set-current", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            roomId,
-            materialId: material.id
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId, materialId: material.id })
         });
 
         const result = await response.json();
@@ -1653,28 +1693,26 @@ function renderMaterialList() {
           return;
         }
 
-        setCurrentMaterial(result.material, true);
+        materials = result.materials || materials;
+        await setCurrentMaterial(result.material, true, result.pageNumber || 1);
       });
 
       const openBtn = document.createElement("button");
       openBtn.type = "button";
       openBtn.textContent = "Open";
-      openBtn.addEventListener("click", () => {
-        window.open(material.url, "_blank");
-      });
+      openBtn.addEventListener("click", () => window.open(material.url, "_blank"));
 
       actions.appendChild(showBtn);
       actions.appendChild(openBtn);
 
       item.appendChild(info);
       item.appendChild(actions);
-
       materialList.appendChild(item);
     });
 }
 
 function startFreehandStroke(pointerId, pos) {
-  activeStrokes[pointerId] = {
+  activeStrokes[pointerId] = withAnnotationContext({
     id: uid(),
     roomId,
     username,
@@ -1685,14 +1723,13 @@ function startFreehandStroke(pointerId, pos) {
     size,
     points: [pos],
     createdAt: Date.now()
-  };
+  });
 
   emitStrokeProgress(activeStrokes[pointerId], true);
 }
 
 function addFreehandPoint(pointerId, pos) {
   const stroke = activeStrokes[pointerId];
-
   if (!stroke) return;
 
   const lastPoint = stroke.points[stroke.points.length - 1];
@@ -1704,7 +1741,6 @@ function addFreehandPoint(pointerId, pos) {
 
 function finishFreehandStroke(pointerId) {
   const stroke = activeStrokes[pointerId];
-
   if (!stroke) return;
 
   delete activeStrokes[pointerId];
@@ -1716,14 +1752,12 @@ function finishFreehandStroke(pointerId) {
   }
 
   strokes.push(stroke);
-
   socket.emit("stroke-add", stroke);
-
   requestRedraw();
 }
 
 function startShape(pointerId, pos, shape) {
-  activeShapes[pointerId] = {
+  activeShapes[pointerId] = withAnnotationContext({
     id: uid(),
     roomId,
     username,
@@ -1735,22 +1769,19 @@ function startShape(pointerId, pos, shape) {
     size,
     points: [pos, pos],
     createdAt: Date.now()
-  };
+  });
 
   emitStrokeProgress(activeShapes[pointerId], true);
 }
 
 function updateShape(pointerId, pos) {
   const shapeStroke = activeShapes[pointerId];
-
   if (!shapeStroke) return;
-
   shapeStroke.points[1] = pos;
 }
 
 function finishShape(pointerId) {
   const shapeStroke = activeShapes[pointerId];
-
   if (!shapeStroke) return;
 
   delete activeShapes[pointerId];
@@ -1765,9 +1796,7 @@ function finishShape(pointerId) {
   }
 
   strokes.push(shapeStroke);
-
   socket.emit("stroke-add", shapeStroke);
-
   requestRedraw();
 }
 
@@ -1777,20 +1806,14 @@ function emitCursor(pos) {
   if (now - lastCursorEmit < CURSOR_INTERVAL) return;
 
   lastCursorEmit = now;
-
-  socket.emit("cursor-move", {
-    x: pos.x,
-    y: pos.y
-  });
+  socket.emit("cursor-move", { x: pos.x, y: pos.y });
 }
 
 function stopPointer(event) {
   const pointerId = event.pointerId;
 
   try {
-    if (canvas.hasPointerCapture(pointerId)) {
-      canvas.releasePointerCapture(pointerId);
-    }
+    if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
   } catch (error) {
     // aman diabaikan
   }
@@ -1824,10 +1847,6 @@ function handlePointerLeave(event) {
 canvas.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   closeShapeMenu();
-
-  if (materialScrollMode) {
-    return;
-  }
 
   if (tool === "pan") {
     activePointers[event.pointerId] = true;
@@ -1900,10 +1919,6 @@ canvas.addEventListener("pointerdown", (event) => {
 canvas.addEventListener("pointermove", (event) => {
   event.preventDefault();
 
-  if (materialScrollMode) {
-    return;
-  }
-
   if (isPanning && panPointerId === event.pointerId) {
     updatePan(event);
     return;
@@ -1911,9 +1926,7 @@ canvas.addEventListener("pointermove", (event) => {
 
   const pos = toVirtualPosition(event);
 
-  if (isInsideBoard(pos.x, pos.y)) {
-    emitCursor(pos);
-  }
+  if (isInsideBoard(pos.x, pos.y)) emitCursor(pos);
 
   if (!activePointers[event.pointerId]) return;
 
@@ -1937,9 +1950,7 @@ canvas.addEventListener("pointermove", (event) => {
   if (activeShapes[event.pointerId]) {
     updateShape(event.pointerId, pos);
 
-    if (activeShapes[event.pointerId]) {
-      emitStrokeProgress(activeShapes[event.pointerId]);
-    }
+    if (activeShapes[event.pointerId]) emitStrokeProgress(activeShapes[event.pointerId]);
 
     requestRedraw();
     return;
@@ -1947,9 +1958,7 @@ canvas.addEventListener("pointermove", (event) => {
 
   addFreehandPoint(event.pointerId, pos);
 
-  if (activeStrokes[event.pointerId]) {
-    emitStrokeProgress(activeStrokes[event.pointerId]);
-  }
+  if (activeStrokes[event.pointerId]) emitStrokeProgress(activeStrokes[event.pointerId]);
 
   requestRedraw();
 });
@@ -1962,31 +1971,17 @@ canvas.addEventListener("pointerout", handlePointerLeave);
 canvas.addEventListener(
   "wheel",
   (event) => {
-    if (materialScrollMode) {
-      return;
-    }
-
     event.preventDefault();
-
     const screen = getScreenPosition(event);
     const factor = event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-
     zoomAtScreenPoint(factor, screen.x, screen.y);
   },
   { passive: false }
 );
 
-toolbarToggleBtn.addEventListener("click", () => {
-  floatingToolbar.classList.toggle("open");
-});
-
-sidePanelToggleBtn.addEventListener("click", () => {
-  sidePanel.classList.toggle("open");
-});
-
-sidePanelCloseBtn.addEventListener("click", () => {
-  sidePanel.classList.remove("open");
-});
+toolbarToggleBtn.addEventListener("click", () => floatingToolbar.classList.toggle("open"));
+sidePanelToggleBtn.addEventListener("click", () => sidePanel.classList.toggle("open"));
+sidePanelCloseBtn.addEventListener("click", () => sidePanel.classList.remove("open"));
 
 panTool.addEventListener("click", () => setTool("pan"));
 selectTool.addEventListener("click", () => setTool("select"));
@@ -2001,9 +1996,7 @@ imageTool.addEventListener("click", () => {
 
 imageInput.addEventListener("change", (event) => {
   const file = event.target.files && event.target.files[0];
-
   if (!file) return;
-
   addImageFileToBoard(file);
 });
 
@@ -2012,45 +2005,47 @@ materialTool.addEventListener("click", () => {
   materialInput.click();
 });
 
-materialUploadBtn.addEventListener("click", () => {
-  materialInput.click();
-});
+materialUploadBtn.addEventListener("click", () => materialInput.click());
 
 materialInput.addEventListener("change", (event) => {
   const file = event.target.files && event.target.files[0];
-
   if (!file) return;
-
   uploadMaterialFile(file);
 });
 
 materialOpenBtn.addEventListener("click", () => {
   if (!currentMaterial) return;
-
   window.open(currentMaterial.url, "_blank");
-});
-
-materialScrollBtn.addEventListener("click", () => {
-  setMaterialScrollMode(!materialScrollMode);
 });
 
 materialHideBtn.addEventListener("click", async () => {
   materialVisible = false;
-  setMaterialScrollMode(false);
-  renderMaterialViewer();
+  await setCurrentMaterial(null, false, 1);
   requestRedraw();
 
   try {
     await fetch("/api/materials/clear-current", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId })
     });
   } catch (error) {
     // tetap aman walau gagal
   }
+});
+
+materialPrevBtn.addEventListener("click", async () => {
+  if (!currentMaterial || !isPdfMaterial(currentMaterial)) return;
+  if (currentMaterialPage <= 1) return;
+
+  await syncMaterialPage(currentMaterialPage - 1);
+});
+
+materialNextBtn.addEventListener("click", async () => {
+  if (!currentMaterial || !isPdfMaterial(currentMaterial)) return;
+  if (currentMaterialPage >= pdfPageCount) return;
+
+  await syncMaterialPage(currentMaterialPage + 1);
 });
 
 shapeMenuBtn.addEventListener("click", (event) => {
@@ -2074,22 +2069,12 @@ circleTool.addEventListener("click", () => {
 });
 
 document.addEventListener("click", (event) => {
-  if (!event.target.closest(".shape-tool-group")) {
-    closeShapeMenu();
-  }
+  if (!event.target.closest(".shape-tool-group")) closeShapeMenu();
 });
 
-zoomOutBtn.addEventListener("click", () => {
-  zoomAtCenter(1 / ZOOM_STEP);
-});
-
-zoomInBtn.addEventListener("click", () => {
-  zoomAtCenter(ZOOM_STEP);
-});
-
-fitViewBtn.addEventListener("click", () => {
-  fitView();
-});
+zoomOutBtn.addEventListener("click", () => zoomAtCenter(1 / ZOOM_STEP));
+zoomInBtn.addEventListener("click", () => zoomAtCenter(ZOOM_STEP));
+fitViewBtn.addEventListener("click", () => fitView());
 
 colorPicker.addEventListener("input", (event) => {
   color = event.target.value;
@@ -2100,13 +2085,8 @@ sizeSlider.addEventListener("input", (event) => {
   sizeLabel.textContent = size;
 });
 
-undoBtn.addEventListener("click", () => {
-  socket.emit("undo", { roomId });
-});
-
-redoBtn.addEventListener("click", () => {
-  socket.emit("redo", { roomId });
-});
+undoBtn.addEventListener("click", () => socket.emit("undo", { roomId }));
+redoBtn.addEventListener("click", () => socket.emit("redo", { roomId }));
 
 function loadImageForExport(src) {
   return new Promise((resolve) => {
@@ -2123,7 +2103,6 @@ function loadImageForExport(src) {
     }
 
     const image = new Image();
-
     image.onload = () => resolve(image);
     image.onerror = () => resolve(null);
     image.src = src;
@@ -2142,13 +2121,7 @@ async function drawStrokeOnExport(renderCtx, stroke) {
   const image = await loadImageForExport(stroke.src);
 
   if (image) {
-    renderCtx.drawImage(
-      image,
-      p.x,
-      p.y,
-      stroke.width || 240,
-      stroke.height || 160
-    );
+    renderCtx.drawImage(image, p.x, p.y, stroke.width || 240, stroke.height || 160);
     return;
   }
 
@@ -2165,13 +2138,11 @@ exportBtn.addEventListener("click", async () => {
   exportCtx.fillStyle = "#ffffff";
   exportCtx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
-  for (const stroke of strokes) {
+  for (const stroke of getVisibleStrokes()) {
     await drawStrokeOnExport(exportCtx, stroke);
   }
 
-  if (splitMode) {
-    drawSplitLine(exportCtx, 1, 0, 0);
-  }
+  if (splitMode) drawSplitLine(exportCtx, 1, 0, 0);
 
   const link = document.createElement("a");
   link.download = `${roomId}-virtual-board.png`;
@@ -2179,6 +2150,103 @@ exportBtn.addEventListener("click", async () => {
   link.click();
 
   setStatus("Board berhasil diekspor ke PNG.");
+});
+
+async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNumber, scaleFactor = 2) {
+  exportCanvas.width = VIRTUAL_WIDTH * scaleFactor;
+  exportCanvas.height = VIRTUAL_HEIGHT * scaleFactor;
+
+  exportCtx.fillStyle = "#ffffff";
+  exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+  const page = await doc.getPage(pageNumber);
+  const layout = getPdfPageLayout(page);
+
+  const tempCanvas = document.createElement("canvas");
+  const tempCtx = tempCanvas.getContext("2d");
+
+  const viewport = page.getViewport({ scale: layout.fit * scaleFactor });
+
+  tempCanvas.width = viewport.width;
+  tempCanvas.height = viewport.height;
+
+  await page.render({
+    canvasContext: tempCtx,
+    viewport
+  }).promise;
+
+  exportCtx.drawImage(
+    tempCanvas,
+    layout.x * scaleFactor,
+    layout.y * scaleFactor,
+    layout.width * scaleFactor,
+    layout.height * scaleFactor
+  );
+
+  const pageStrokes = strokes.filter((stroke) => {
+    return (
+      stroke.materialId === currentMaterial.id &&
+      Number(stroke.pageNumber || 1) === pageNumber
+    );
+  });
+
+  pageStrokes.forEach((stroke) => {
+    drawStrokeOn(exportCtx, stroke, scaleFactor, 0, 0);
+  });
+}
+
+exportAnnotatedPdfBtn.addEventListener("click", async () => {
+  try {
+    if (!currentMaterial || !isPdfMaterial(currentMaterial)) {
+      alert("Export annotated PDF hanya tersedia untuk material PDF.");
+      return;
+    }
+
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      alert("Library jsPDF belum termuat.");
+      return;
+    }
+
+    setStatus("Membuat annotated PDF...");
+
+    const doc = await loadPdfDoc(currentMaterial);
+    const { jsPDF } = window.jspdf;
+
+    const pdf = new jsPDF({
+      orientation: "landscape",
+      unit: "px",
+      format: [VIRTUAL_WIDTH, VIRTUAL_HEIGHT]
+    });
+
+    const exportCanvas = document.createElement("canvas");
+    const exportCtx = exportCanvas.getContext("2d");
+
+    const pageCount = doc.numPages || 1;
+
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+      if (pageNumber > 1) {
+        pdf.addPage([VIRTUAL_WIDTH, VIRTUAL_HEIGHT], "landscape");
+      }
+
+      await renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNumber, 2);
+
+      const imageData = exportCanvas.toDataURL("image/jpeg", 0.92);
+
+      pdf.addImage(imageData, "JPEG", 0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+    }
+
+    const cleanName = String(currentMaterial.filename || "material")
+      .replace(/\.[^/.]+$/, "")
+      .replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    pdf.save(`${cleanName}-annotated.pdf`);
+
+    setStatus("Annotated PDF berhasil dibuat.");
+  } catch (error) {
+    console.error(error);
+    alert("Gagal export annotated PDF.");
+    setStatus("Gagal export annotated PDF.");
+  }
 });
 
 clearBtn.addEventListener("click", () => {
@@ -2200,11 +2268,7 @@ splitBtn.addEventListener("click", () => {
   }
 
   splitMode = !splitMode;
-
-  socket.emit("split-board", {
-    roomId,
-    splitMode
-  });
+  socket.emit("split-board", { roomId, splitMode });
 });
 
 lockBtn.addEventListener("click", () => {
@@ -2214,11 +2278,7 @@ lockBtn.addEventListener("click", () => {
   }
 
   locked = !locked;
-
-  socket.emit("lock-board", {
-    roomId,
-    locked
-  });
+  socket.emit("lock-board", { roomId, locked });
 });
 
 backBtn.addEventListener("click", () => {
@@ -2261,18 +2321,9 @@ window.addEventListener("keydown", (event) => {
   if (key === "l") setTool("line");
   if (key === "r") setTool("rect");
   if (key === "c") setTool("circle");
-
-  if (key === "0") {
-    fitView();
-  }
-
-  if (key === "=" || key === "+") {
-    zoomAtCenter(ZOOM_STEP);
-  }
-
-  if (key === "-" || key === "_") {
-    zoomAtCenter(1 / ZOOM_STEP);
-  }
+  if (key === "0") fitView();
+  if (key === "=" || key === "+") zoomAtCenter(ZOOM_STEP);
+  if (key === "-" || key === "_") zoomAtCenter(1 / ZOOM_STEP);
 
   if ((event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey) {
     event.preventDefault();
@@ -2293,28 +2344,23 @@ window.addEventListener("keyup", (event) => {
 
   if (event.code === "Space" && previousToolBeforeSpace) {
     event.preventDefault();
-
     setTool(previousToolBeforeSpace);
     previousToolBeforeSpace = null;
   }
 });
 
-socket.emit("join-room", {
-  roomId,
-  username,
-  role
-});
+socket.emit("join-room", { roomId, username, role });
 
-socket.on("board-state", (data) => {
+socket.on("board-state", async (data) => {
   strokes = Array.isArray(data.strokes) ? data.strokes : [];
   splitMode = Boolean(data.splitMode);
   locked = Boolean(data.locked);
   materials = Array.isArray(data.materials) ? data.materials : [];
 
   if (data.currentMaterial) {
-    setCurrentMaterial(data.currentMaterial, true);
+    await setCurrentMaterial(data.currentMaterial, true, data.currentMaterialPage || 1);
   } else {
-    setCurrentMaterial(null, false);
+    await setCurrentMaterial(null, false, 1);
   }
 
   updateSplitUI();
@@ -2323,25 +2369,37 @@ socket.on("board-state", (data) => {
   requestRedraw();
 });
 
-socket.on("material-list", (data) => {
+socket.on("material-list", async (data) => {
   materials = Array.isArray(data.materials) ? data.materials : materials;
 
   if (data.currentMaterial) {
-    setCurrentMaterial(data.currentMaterial, true);
+    await setCurrentMaterial(data.currentMaterial, true, data.currentMaterialPage || 1);
   }
 
   renderMaterialList();
 });
 
-socket.on("material-set", (data) => {
+socket.on("material-set", async (data) => {
   materials = Array.isArray(data.materials) ? data.materials : materials;
-  setCurrentMaterial(data.material, true);
+  await setCurrentMaterial(data.material, true, data.pageNumber || 1);
   renderMaterialList();
   setStatus("Materi pembelajaran diperbarui.");
 });
 
-socket.on("material-clear", () => {
-  setCurrentMaterial(null, false);
+socket.on("material-page-set", async (data) => {
+  if (!currentMaterial || data.materialId !== currentMaterial.id) return;
+
+  currentMaterialPage = Math.max(1, Number(data.pageNumber) || 1);
+  selectedStrokeId = null;
+
+  await renderCurrentPdfPage(true);
+  requestRedraw();
+
+  setStatus(`Pindah ke halaman ${currentMaterialPage}.`);
+});
+
+socket.on("material-clear", async () => {
+  await setCurrentMaterial(null, false, 1);
   setStatus("Materi disembunyikan.");
 });
 
@@ -2360,21 +2418,16 @@ socket.on("stroke-add", (stroke) => {
 
   const exists = strokes.some((item) => item.id === stroke.id);
 
-  if (!exists) {
-    strokes.push(stroke);
-  }
+  if (!exists) strokes.push(stroke);
 
   requestRedraw();
 });
 
 socket.on("stroke-remove", (data) => {
   delete activeRemoteStrokes[data.strokeId];
-
   strokes = strokes.filter((stroke) => stroke.id !== data.strokeId);
 
-  if (selectedStrokeId === data.strokeId) {
-    selectedStrokeId = null;
-  }
+  if (selectedStrokeId === data.strokeId) selectedStrokeId = null;
 
   requestRedraw();
 });
@@ -2384,11 +2437,8 @@ socket.on("stroke-update", (updatedStroke) => {
 
   const index = strokes.findIndex((stroke) => stroke.id === updatedStroke.id);
 
-  if (index === -1) {
-    strokes.push(updatedStroke);
-  } else {
-    strokes[index] = updatedStroke;
-  }
+  if (index === -1) strokes.push(updatedStroke);
+  else strokes[index] = updatedStroke;
 
   requestRedraw();
 });
@@ -2397,9 +2447,7 @@ socket.on("clear", () => {
   strokes = [];
   selectedStrokeId = null;
 
-  Object.keys(activeRemoteStrokes).forEach((id) => {
-    delete activeRemoteStrokes[id];
-  });
+  Object.keys(activeRemoteStrokes).forEach((id) => delete activeRemoteStrokes[id]);
 
   requestRedraw();
 });
@@ -2443,10 +2491,7 @@ socket.on("room-deleted", (data) => {
 });
 
 window.addEventListener("resize", resizeCanvas);
-
-window.addEventListener("beforeunload", () => {
-  socket.emit("cursor-leave");
-});
+window.addEventListener("beforeunload", () => socket.emit("cursor-leave"));
 
 updateTeacherControls();
 updateToolUI();

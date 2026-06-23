@@ -75,7 +75,8 @@ function toPersistableRooms() {
       strokes: Array.isArray(room.strokes) ? room.strokes : [],
       redoStack: Array.isArray(room.redoStack) ? room.redoStack : [],
       materials: Array.isArray(room.materials) ? room.materials : [],
-      currentMaterialId: room.currentMaterialId || null
+      currentMaterialId: room.currentMaterialId || null,
+      currentMaterialPage: Number(room.currentMaterialPage) || 1
     };
   });
 
@@ -124,7 +125,8 @@ function loadRoomsFromDisk() {
         strokes: Array.isArray(room.strokes) ? room.strokes : [],
         redoStack: Array.isArray(room.redoStack) ? room.redoStack : [],
         materials: Array.isArray(room.materials) ? room.materials : [],
-        currentMaterialId: room.currentMaterialId || null
+        currentMaterialId: room.currentMaterialId || null,
+        currentMaterialPage: Number(room.currentMaterialPage) || 1
       };
     });
 
@@ -143,7 +145,8 @@ function createRoomIfNotExists(roomId) {
       strokes: [],
       redoStack: [],
       materials: [],
-      currentMaterialId: null
+      currentMaterialId: null,
+      currentMaterialPage: 1
     };
 
     scheduleSave();
@@ -213,6 +216,9 @@ function normalizeStroke(socket, rawStroke = {}) {
       ? rawSrc
       : "";
 
+  const materialId = rawStroke.materialId ? String(rawStroke.materialId) : null;
+  const pageNumber = Math.max(1, Number(rawStroke.pageNumber) || 1);
+
   return {
     id: String(rawStroke.id || Date.now() + "-" + Math.random()),
     roomId,
@@ -224,6 +230,8 @@ function normalizeStroke(socket, rawStroke = {}) {
     shape,
     text,
     src,
+    materialId,
+    pageNumber,
     color: String(
       rawStroke.color ||
       (socket.role === "teacher" ? "#111827" : "#2563eb")
@@ -414,6 +422,7 @@ function getRoomSummary(roomId, room) {
     imageCount,
     materialCount: Array.isArray(room.materials) ? room.materials.length : 0,
     currentMaterialId: room.currentMaterialId || null,
+    currentMaterialPage: Number(room.currentMaterialPage) || 1,
     lastActivity: getLastActivity(room)
   };
 }
@@ -441,9 +450,7 @@ app.get("/api/admin/rooms", requireAdmin, (req, res) => {
       return bb - aa;
     });
 
-  res.json({
-    rooms: summaries
-  });
+  res.json({ rooms: summaries });
 });
 
 app.get("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
@@ -460,7 +467,8 @@ app.get("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
     users: getRoomUsers(roomId),
     strokes: rooms[roomId].strokes,
     materials: rooms[roomId].materials,
-    currentMaterial: getCurrentMaterial(roomId)
+    currentMaterial: getCurrentMaterial(roomId),
+    currentMaterialPage: Number(rooms[roomId].currentMaterialPage) || 1
   });
 });
 
@@ -533,9 +541,7 @@ app.delete("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
 
   scheduleSave();
 
-  io.to(roomId).emit("room-deleted", {
-    roomId
-  });
+  io.to(roomId).emit("room-deleted", { roomId });
 
   res.json({
     ok: true,
@@ -604,24 +610,28 @@ app.post("/api/materials/upload", (req, res) => {
 
     rooms[roomId].materials.push(material);
     rooms[roomId].currentMaterialId = material.id;
+    rooms[roomId].currentMaterialPage = 1;
 
     scheduleSave();
 
     io.to(roomId).emit("material-list", {
       materials: rooms[roomId].materials,
       currentMaterialId: rooms[roomId].currentMaterialId,
+      currentMaterialPage: rooms[roomId].currentMaterialPage,
       currentMaterial: material
     });
 
     io.to(roomId).emit("material-set", {
       material,
-      materials: rooms[roomId].materials
+      materials: rooms[roomId].materials,
+      pageNumber: 1
     });
 
     res.json({
       ok: true,
       material,
-      materials: rooms[roomId].materials
+      materials: rooms[roomId].materials,
+      currentMaterialPage: 1
     });
   } catch (error) {
     res.status(500).json({
@@ -645,18 +655,53 @@ app.post("/api/materials/set-current", (req, res) => {
   }
 
   rooms[roomId].currentMaterialId = material.id;
+  rooms[roomId].currentMaterialPage = 1;
 
   scheduleSave();
 
   io.to(roomId).emit("material-set", {
     material,
-    materials: rooms[roomId].materials
+    materials: rooms[roomId].materials,
+    pageNumber: 1
   });
 
   res.json({
     ok: true,
     material,
-    materials: rooms[roomId].materials
+    materials: rooms[roomId].materials,
+    pageNumber: 1
+  });
+});
+
+app.post("/api/materials/set-page", (req, res) => {
+  const roomId = String(req.body.roomId || "default").trim();
+  const materialId = String(req.body.materialId || "");
+  const pageNumber = Math.max(1, Number(req.body.pageNumber) || 1);
+
+  createRoomIfNotExists(roomId);
+
+  const material = rooms[roomId].materials.find((m) => m.id === materialId);
+
+  if (!material) {
+    return res.status(404).json({
+      error: "Materi tidak ditemukan."
+    });
+  }
+
+  rooms[roomId].currentMaterialId = material.id;
+  rooms[roomId].currentMaterialPage = pageNumber;
+
+  scheduleSave();
+
+  io.to(roomId).emit("material-page-set", {
+    materialId,
+    pageNumber
+  });
+
+  res.json({
+    ok: true,
+    materialId,
+    pageNumber
   });
 });
 
@@ -666,14 +711,13 @@ app.post("/api/materials/clear-current", (req, res) => {
   createRoomIfNotExists(roomId);
 
   rooms[roomId].currentMaterialId = null;
+  rooms[roomId].currentMaterialPage = 1;
 
   scheduleSave();
 
   io.to(roomId).emit("material-clear");
 
-  res.json({
-    ok: true
-  });
+  res.json({ ok: true });
 });
 
 /* SOCKET.IO */
@@ -708,6 +752,7 @@ io.on("connection", (socket) => {
       locked: rooms[roomId].locked,
       materials: rooms[roomId].materials,
       currentMaterialId: rooms[roomId].currentMaterialId,
+      currentMaterialPage: Number(rooms[roomId].currentMaterialPage) || 1,
       currentMaterial: getCurrentMaterial(roomId)
     });
 
@@ -790,9 +835,7 @@ io.on("connection", (socket) => {
     room.strokes.splice(index, 1);
     scheduleSave();
 
-    io.to(roomId).emit("stroke-remove", {
-      strokeId
-    });
+    io.to(roomId).emit("stroke-remove", { strokeId });
   });
 
   socket.on("stroke-update", (rawStroke = {}) => {

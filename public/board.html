@@ -18,6 +18,7 @@
       <button id="undoBtn" type="button">Undo</button>
       <button id="redoBtn" type="button">Redo</button>
       <button id="exportBtn" type="button">Export PNG</button>
+      <button id="exportAnnotatedPdfBtn" type="button">Save PDF</button>
       <button id="lockBtn" type="button">Lock Board</button>
       <button id="splitBtn" type="button">Split Board</button>
       <button id="clearBtn" type="button">Clear Board</button>
@@ -30,6 +31,8 @@
     <main class="board-area">
       <div id="materialLayer" class="material-layer hidden">
         <div id="materialStage" class="material-stage">
+          <canvas id="pdfCanvas" class="pdf-canvas"></canvas>
+
           <iframe id="materialFrame" title="Material Viewer"></iframe>
 
           <div id="materialFallback" class="material-fallback hidden">
@@ -93,8 +96,10 @@
 
       <div id="materialBadge" class="material-badge hidden">
         <span id="materialName">No material</span>
+        <button id="materialPrevBtn" type="button">Prev</button>
+        <span id="materialPageLabel">1 / 1</span>
+        <button id="materialNextBtn" type="button">Next</button>
         <button id="materialOpenBtn" type="button">Open</button>
-        <button id="materialScrollBtn" type="button">Scroll</button>
         <button id="materialHideBtn" type="button">Hide</button>
       </div>
 
@@ -145,6 +150,8 @@
     </aside>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="board.js"></script>
 </body>
