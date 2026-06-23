@@ -156,7 +156,13 @@ function resizeCanvas() {
   requestRedraw();
 }
 
-function clearScreenOnly(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY, includeOutside = true) {
+function clearScreenOnly(
+  renderCtx = ctx,
+  s = scale,
+  ox = offsetX,
+  oy = offsetY,
+  includeOutside = true
+) {
   if (includeOutside) {
     renderCtx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -1073,6 +1079,11 @@ socket.on("cursor-move", (cursor) => {
 socket.on("cursor-leave", (cursor) => {
   delete remoteCursors[cursor.id];
   requestRedraw();
+});
+
+socket.on("room-deleted", (data) => {
+  alert(`Room "${data.roomId}" sudah dihapus oleh admin.`);
+  window.location.href = "/";
 });
 
 window.addEventListener("resize", resizeCanvas);

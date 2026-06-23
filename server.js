@@ -8,9 +8,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+app.use(express.json());
 app.use(express.static("public"));
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR =
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  process.env.DATA_DIR ||
+  path.join(__dirname, "data");
+
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
 
 const SAVE_DELAY = 300;
@@ -22,9 +27,7 @@ let saveTimer = null;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, {
-      recursive: true
-    });
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 }
 
@@ -53,16 +56,14 @@ function saveRoomsToDisk() {
     fs.writeFileSync(tempFile, payload, "utf8");
     fs.renameSync(tempFile, DATA_FILE);
 
-    console.log("Board tersimpan ke data/rooms.json");
+    console.log("Board tersimpan ke", DATA_FILE);
   } catch (error) {
     console.error("Gagal menyimpan board:", error.message);
   }
 }
 
 function scheduleSave() {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-  }
+  if (saveTimer) clearTimeout(saveTimer);
 
   saveTimer = setTimeout(() => {
     saveRoomsToDisk();
@@ -74,9 +75,7 @@ function loadRoomsFromDisk() {
   try {
     ensureDataDir();
 
-    if (!fs.existsSync(DATA_FILE)) {
-      return;
-    }
+    if (!fs.existsSync(DATA_FILE)) return;
 
     const raw = fs.readFileSync(DATA_FILE, "utf8");
     const parsed = JSON.parse(raw);
@@ -91,7 +90,7 @@ function loadRoomsFromDisk() {
       };
     });
 
-    console.log("Board berhasil dimuat dari data/rooms.json");
+    console.log("Board berhasil dimuat dari", DATA_FILE);
   } catch (error) {
     console.error("Gagal memuat board:", error.message);
   }
@@ -136,9 +135,7 @@ function sanitizePoint(point) {
   const x = Number(point.x);
   const y = Number(point.y);
 
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return null;
-  }
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
   return { x, y };
 }
@@ -210,14 +207,203 @@ function isValidStroke(stroke) {
 }
 
 function trimRoomIfNeeded(room) {
-  if (!Array.isArray(room.strokes)) {
-    room.strokes = [];
-  }
+  if (!Array.isArray(room.strokes)) room.strokes = [];
 
   if (room.strokes.length > MAX_STROKES_PER_ROOM) {
     room.strokes = room.strokes.slice(-MAX_STROKES_PER_ROOM);
   }
 }
+
+/* =========================
+   ADMIN API
+========================= */
+
+function requireAdmin(req, res, next) {
+  const expectedPin = process.env.ADMIN_PIN;
+  const givenPin = req.headers["x-admin-pin"];
+
+  if (!expectedPin) {
+    return res.status(500).json({
+      error: "ADMIN_PIN belum diset di environment variable."
+    });
+  }
+
+  if (!givenPin || givenPin !== expectedPin) {
+    return res.status(401).json({
+      error: "PIN admin salah atau belum diisi."
+    });
+  }
+
+  next();
+}
+
+function getLastActivity(room) {
+  const strokes = Array.isArray(room.strokes) ? room.strokes : [];
+
+  if (strokes.length === 0) return null;
+
+  return Math.max(
+    ...strokes.map((stroke) => Number(stroke.createdAt) || 0)
+  );
+}
+
+function getRoomSummary(roomId, room) {
+  const strokes = Array.isArray(room.strokes) ? room.strokes : [];
+  const users = getRoomUsers(roomId);
+
+  const freehandCount = strokes.filter((s) => s.type === "freehand").length;
+  const shapeCount = strokes.filter((s) => s.type === "shape").length;
+  const textCount = strokes.filter((s) => s.type === "text").length;
+
+  return {
+    roomId,
+    activeUsers: users.length,
+    teachers: users.filter((u) => u.role === "teacher").length,
+    students: users.filter((u) => u.role === "student").length,
+    splitMode: Boolean(room.splitMode),
+    locked: Boolean(room.locked),
+    strokes: strokes.length,
+    freehandCount,
+    shapeCount,
+    textCount,
+    lastActivity: getLastActivity(room)
+  };
+}
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
+app.get("/api/admin/storage", requireAdmin, (req, res) => {
+  res.json({
+    dataDir: DATA_DIR,
+    dataFile: DATA_FILE,
+    dataFileExists: fs.existsSync(DATA_FILE),
+    roomCount: Object.keys(rooms).length
+  });
+});
+
+app.get("/api/admin/rooms", requireAdmin, (req, res) => {
+  const summaries = Object.entries(rooms)
+    .map(([roomId, room]) => getRoomSummary(roomId, room))
+    .sort((a, b) => {
+      const aa = a.lastActivity || 0;
+      const bb = b.lastActivity || 0;
+      return bb - aa;
+    });
+
+  res.json({
+    rooms: summaries
+  });
+});
+
+app.get("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
+  const roomId = req.params.roomId;
+
+  if (!rooms[roomId]) {
+    return res.status(404).json({
+      error: "Room tidak ditemukan."
+    });
+  }
+
+  res.json({
+    summary: getRoomSummary(roomId, rooms[roomId]),
+    users: getRoomUsers(roomId),
+    strokes: rooms[roomId].strokes
+  });
+});
+
+app.post("/api/admin/rooms/:roomId/clear", requireAdmin, (req, res) => {
+  const roomId = req.params.roomId;
+
+  createRoomIfNotExists(roomId);
+
+  rooms[roomId].strokes = [];
+  rooms[roomId].redoStack = [];
+
+  scheduleSave();
+
+  io.to(roomId).emit("clear");
+
+  res.json({
+    ok: true,
+    message: `Room ${roomId} berhasil dibersihkan.`
+  });
+});
+
+app.post("/api/admin/rooms/:roomId/lock", requireAdmin, (req, res) => {
+  const roomId = req.params.roomId;
+
+  createRoomIfNotExists(roomId);
+
+  rooms[roomId].locked = Boolean(req.body.locked);
+
+  scheduleSave();
+
+  io.to(roomId).emit("lock-board", {
+    locked: rooms[roomId].locked
+  });
+
+  res.json({
+    ok: true,
+    locked: rooms[roomId].locked
+  });
+});
+
+app.post("/api/admin/rooms/:roomId/split", requireAdmin, (req, res) => {
+  const roomId = req.params.roomId;
+
+  createRoomIfNotExists(roomId);
+
+  rooms[roomId].splitMode = Boolean(req.body.splitMode);
+
+  scheduleSave();
+
+  io.to(roomId).emit("split-board", {
+    splitMode: rooms[roomId].splitMode
+  });
+
+  res.json({
+    ok: true,
+    splitMode: rooms[roomId].splitMode
+  });
+});
+
+app.delete("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
+  const roomId = req.params.roomId;
+
+  if (!rooms[roomId]) {
+    return res.status(404).json({
+      error: "Room tidak ditemukan."
+    });
+  }
+
+  delete rooms[roomId];
+
+  scheduleSave();
+
+  io.to(roomId).emit("room-deleted", {
+    roomId
+  });
+
+  res.json({
+    ok: true,
+    message: `Room ${roomId} berhasil dihapus.`
+  });
+});
+
+app.post("/api/admin/save", requireAdmin, (req, res) => {
+  saveRoomsToDisk();
+
+  res.json({
+    ok: true,
+    message: "Data board berhasil disimpan manual."
+  });
+});
+
+/* =========================
+   SOCKET.IO BOARD
+========================= */
 
 loadRoomsFromDisk();
 

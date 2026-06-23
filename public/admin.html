@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Room Management</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="admin-page">
+  <div class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <h1>Room Management</h1>
+        <p>Kelola room, lock board, split board, clear board, dan hapus room.</p>
+      </div>
+
+      <div class="admin-header-actions">
+        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="saveBtn" type="button">Save Now</button>
+        <button id="logoutBtn" type="button">Logout</button>
+      </div>
+    </header>
+
+    <section id="loginCard" class="admin-card admin-login">
+      <h2>Admin Login</h2>
+      <p>Masukkan PIN admin dari environment variable Railway.</p>
+
+      <form id="loginForm">
+        <input id="adminPin" type="password" placeholder="ADMIN_PIN" required />
+        <button type="submit">Masuk Admin</button>
+      </form>
+    </section>
+
+    <section id="dashboardCard" class="admin-dashboard hidden">
+      <div class="admin-stats">
+        <div class="stat-card">
+          <span>Total Room</span>
+          <strong id="totalRooms">0</strong>
+        </div>
+
+        <div class="stat-card">
+          <span>Total Stroke</span>
+          <strong id="totalStrokes">0</strong>
+        </div>
+
+        <div class="stat-card">
+          <span>User Online</span>
+          <strong id="totalUsers">0</strong>
+        </div>
+
+        <div class="stat-card">
+          <span>Storage</span>
+          <strong id="storageStatus">-</strong>
+        </div>
+      </div>
+
+      <div id="noticeBox" class="notice-box"></div>
+
+      <div id="roomList" class="room-grid"></div>
+    </section>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
