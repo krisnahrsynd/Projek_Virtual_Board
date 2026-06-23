@@ -17,6 +17,7 @@ const redoBtn = document.getElementById("redoBtn");
 const lockBtn = document.getElementById("lockBtn");
 const exportBtn = document.getElementById("exportBtn");
 
+const selectTool = document.getElementById("selectTool");
 const penTool = document.getElementById("penTool");
 const eraserTool = document.getElementById("eraserTool");
 const textTool = document.getElementById("textTool");
@@ -44,6 +45,9 @@ const VIRTUAL_HEIGHT = 720;
 const DEFAULT_TEACHER_COLOR = "#111827";
 const DEFAULT_STUDENT_COLOR = "#2563eb";
 
+const CURSOR_INTERVAL = 35;
+const STROKE_PROGRESS_INTERVAL = 18;
+
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
@@ -58,13 +62,16 @@ let size = role === "teacher" ? 4 : 3;
 
 let redrawPending = false;
 let lastCursorEmit = 0;
+let lastStrokeProgressEmit = 0;
 
-const CURSOR_INTERVAL = 35;
+let selectedStrokeId = null;
+let draggingSelection = null;
 
 const activePointers = {};
 const activeStrokes = {};
 const activeShapes = {};
 const activeErasers = {};
+const activeRemoteStrokes = {};
 const remoteCursors = {};
 
 colorPicker.value = color;
@@ -73,6 +80,29 @@ sizeLabel.textContent = size;
 
 function uid() {
   return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+}
+
+function emitStrokeProgress(stroke, force = false) {
+  if (!stroke) return;
+
+  const now = Date.now();
+
+  if (!force && now - lastStrokeProgressEmit < STROKE_PROGRESS_INTERVAL) {
+    return;
+  }
+
+  lastStrokeProgressEmit = now;
+
+  socket.emit("stroke-progress", stroke);
+}
+
+function emitStrokeCancel(stroke) {
+  if (!stroke) return;
+
+  socket.emit("stroke-cancel", {
+    roomId,
+    id: stroke.id
+  });
 }
 
 function setStatus(text) {
@@ -86,6 +116,7 @@ function setTool(nextTool) {
 
 function updateToolUI() {
   const buttons = [
+    [selectTool, "select"],
     [penTool, "pen"],
     [eraserTool, "eraser"],
     [textTool, "text"],
@@ -98,10 +129,12 @@ function updateToolUI() {
     button.classList.toggle("active", tool === value);
   });
 
+  canvas.classList.toggle("select-cursor", tool === "select");
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
   canvas.classList.toggle("text-cursor", tool === "text");
 
   const label = {
+    select: "Mode: Select",
     pen: "Mode: Pen",
     eraser: "Mode: Eraser",
     text: "Mode: Text",
@@ -444,9 +477,11 @@ function redrawAll() {
   clearScreenOnly();
 
   strokes.forEach((stroke) => drawStrokeOn(ctx, stroke));
+  Object.values(activeRemoteStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
   Object.values(activeStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
   Object.values(activeShapes).forEach((stroke) => drawStrokeOn(ctx, stroke));
 
+  drawSelectionBox();
   drawSplitLine();
   drawLockedOverlay();
   drawRemoteCursors();
@@ -575,6 +610,93 @@ function getVirtualTextBox(stroke) {
   };
 }
 
+function getSelectedStroke() {
+  return strokes.find((stroke) => stroke.id === selectedStrokeId) || null;
+}
+
+function getStrokeBounds(stroke) {
+  if (!stroke) return null;
+
+  if (stroke.type === "text") {
+    const box = getVirtualTextBox(stroke);
+    if (!box) return null;
+
+    return {
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height
+    };
+  }
+
+  const pts = stroke.points || [];
+
+  if (pts.length === 0) return null;
+
+  let minX = pts[0].x;
+  let minY = pts[0].y;
+  let maxX = pts[0].x;
+  let maxY = pts[0].y;
+
+  pts.forEach((point) => {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  });
+
+  const padding = Math.max(6, (stroke.size || 3) * 2);
+
+  return {
+    x: minX - padding,
+    y: minY - padding,
+    width: maxX - minX + padding * 2,
+    height: maxY - minY + padding * 2
+  };
+}
+
+function drawSelectionBox() {
+  const stroke = getSelectedStroke();
+  const bounds = getStrokeBounds(stroke);
+
+  if (!bounds) return;
+
+  const x = offsetX + bounds.x * scale;
+  const y = offsetY + bounds.y * scale;
+  const w = bounds.width * scale;
+  const h = bounds.height * scale;
+
+  ctx.save();
+
+  ctx.strokeStyle = "#10b981";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#10b981";
+
+  const handleSize = 8;
+
+  const handles = [
+    [x, y],
+    [x + w, y],
+    [x, y + h],
+    [x + w, y + h]
+  ];
+
+  handles.forEach(([hx, hy]) => {
+    ctx.fillRect(
+      hx - handleSize / 2,
+      hy - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+  });
+
+  ctx.restore();
+}
+
 function canEraseLocal(stroke) {
   return role === "teacher" || stroke.username === username;
 }
@@ -622,6 +744,110 @@ function strokeHitTest(stroke, point, radius) {
   return false;
 }
 
+function findSelectableStrokeAt(pos) {
+  const radius = Math.max(8, Number(sizeSlider.value) * 2);
+
+  for (let i = strokes.length - 1; i >= 0; i--) {
+    const stroke = strokes[i];
+
+    if (!canEraseLocal(stroke)) continue;
+
+    if (strokeHitTest(stroke, pos, radius)) {
+      return stroke;
+    }
+  }
+
+  return null;
+}
+
+function moveStrokeBy(stroke, dx, dy) {
+  if (!stroke || !Array.isArray(stroke.points)) return;
+
+  stroke.points = stroke.points.map((point) => ({
+    x: point.x + dx,
+    y: point.y + dy
+  }));
+}
+
+function clampStrokeInsideBoard(stroke) {
+  const bounds = getStrokeBounds(stroke);
+
+  if (!bounds) return;
+
+  let dx = 0;
+  let dy = 0;
+
+  if (bounds.x < 0) dx = -bounds.x;
+  if (bounds.y < 0) dy = -bounds.y;
+
+  if (bounds.x + bounds.width > VIRTUAL_WIDTH) {
+    dx = VIRTUAL_WIDTH - (bounds.x + bounds.width);
+  }
+
+  if (bounds.y + bounds.height > VIRTUAL_HEIGHT) {
+    dy = VIRTUAL_HEIGHT - (bounds.y + bounds.height);
+  }
+
+  if (dx !== 0 || dy !== 0) {
+    moveStrokeBy(stroke, dx, dy);
+  }
+}
+
+function startSelectionDrag(pointerId, pos, stroke) {
+  selectedStrokeId = stroke ? stroke.id : null;
+
+  if (!stroke) {
+    draggingSelection = null;
+    requestRedraw();
+    return;
+  }
+
+  draggingSelection = {
+    pointerId,
+    lastPos: pos,
+    moved: false
+  };
+
+  requestRedraw();
+}
+
+function updateSelectionDrag(pointerId, pos) {
+  if (!draggingSelection) return;
+  if (draggingSelection.pointerId !== pointerId) return;
+
+  const stroke = getSelectedStroke();
+
+  if (!stroke) return;
+
+  const dx = pos.x - draggingSelection.lastPos.x;
+  const dy = pos.y - draggingSelection.lastPos.y;
+
+  moveStrokeBy(stroke, dx, dy);
+  clampStrokeInsideBoard(stroke);
+
+  draggingSelection.lastPos = pos;
+  draggingSelection.moved = true;
+
+  requestRedraw();
+}
+
+function finishSelectionDrag(pointerId) {
+  if (!draggingSelection) return false;
+  if (draggingSelection.pointerId !== pointerId) return false;
+
+  const stroke = getSelectedStroke();
+
+  if (stroke && draggingSelection.moved) {
+    socket.emit("stroke-update", stroke);
+  }
+
+  draggingSelection = null;
+
+  requestRedraw();
+
+  return true;
+}
+
 function eraseAt(pos) {
   const eraserRadius = Math.max(10, Number(sizeSlider.value) * 3);
   let removed = false;
@@ -640,6 +866,10 @@ function eraseAt(pos) {
         roomId,
         strokeId
       });
+
+      if (selectedStrokeId === strokeId) {
+        selectedStrokeId = null;
+      }
 
       removed = true;
       break;
@@ -694,6 +924,8 @@ function startFreehandStroke(pointerId, pos) {
     points: [pos],
     createdAt: Date.now()
   };
+
+  emitStrokeProgress(activeStrokes[pointerId], true);
 }
 
 function addFreehandPoint(pointerId, pos) {
@@ -716,6 +948,7 @@ function finishFreehandStroke(pointerId) {
   delete activeStrokes[pointerId];
 
   if (stroke.points.length < 2) {
+    emitStrokeCancel(stroke);
     requestRedraw();
     return;
   }
@@ -741,6 +974,8 @@ function startShape(pointerId, pos, shape) {
     points: [pos, pos],
     createdAt: Date.now()
   };
+
+  emitStrokeProgress(activeShapes[pointerId], true);
 }
 
 function updateShape(pointerId, pos) {
@@ -762,6 +997,7 @@ function finishShape(pointerId) {
   const b = shapeStroke.points[1];
 
   if (distance(a, b) < 3) {
+    emitStrokeCancel(shapeStroke);
     requestRedraw();
     return;
   }
@@ -795,6 +1031,11 @@ function stopPointer(event) {
     }
   } catch (error) {
     // aman diabaikan
+  }
+
+  if (finishSelectionDrag(pointerId)) {
+    delete activePointers[pointerId];
+    return;
   }
 
   delete activePointers[pointerId];
@@ -831,6 +1072,12 @@ canvas.addEventListener("pointerdown", (event) => {
     canvas.setPointerCapture(event.pointerId);
   } catch (error) {
     // aman diabaikan
+  }
+
+  if (tool === "select") {
+    const selected = findSelectableStrokeAt(pos);
+    startSelectionDrag(event.pointerId, pos, selected);
+    return;
   }
 
   if (tool === "text") {
@@ -873,6 +1120,11 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
 
+  if (draggingSelection && draggingSelection.pointerId === event.pointerId) {
+    updateSelectionDrag(event.pointerId, pos);
+    return;
+  }
+
   if (activeErasers[event.pointerId]) {
     eraseAt(pos);
     return;
@@ -880,11 +1132,21 @@ canvas.addEventListener("pointermove", (event) => {
 
   if (activeShapes[event.pointerId]) {
     updateShape(event.pointerId, pos);
+
+    if (activeShapes[event.pointerId]) {
+      emitStrokeProgress(activeShapes[event.pointerId]);
+    }
+
     requestRedraw();
     return;
   }
 
   addFreehandPoint(event.pointerId, pos);
+
+  if (activeStrokes[event.pointerId]) {
+    emitStrokeProgress(activeStrokes[event.pointerId]);
+  }
+
   requestRedraw();
 });
 
@@ -893,6 +1155,7 @@ canvas.addEventListener("pointerleave", handlePointerLeave);
 canvas.addEventListener("pointercancel", handlePointerLeave);
 canvas.addEventListener("pointerout", handlePointerLeave);
 
+selectTool.addEventListener("click", () => setTool("select"));
 penTool.addEventListener("click", () => setTool("pen"));
 eraserTool.addEventListener("click", () => setTool("eraser"));
 textTool.addEventListener("click", () => setTool("text"));
@@ -991,6 +1254,7 @@ backBtn.addEventListener("click", () => {
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
 
+  if (key === "v") setTool("select");
   if (key === "p") setTool("pen");
   if (key === "e") setTool("eraser");
   if (key === "t") setTool("text");
@@ -1028,7 +1292,19 @@ socket.on("board-state", (data) => {
   requestRedraw();
 });
 
+socket.on("stroke-progress", (stroke) => {
+  activeRemoteStrokes[stroke.id] = stroke;
+  requestRedraw();
+});
+
+socket.on("stroke-cancel", (data) => {
+  delete activeRemoteStrokes[data.id];
+  requestRedraw();
+});
+
 socket.on("stroke-add", (stroke) => {
+  delete activeRemoteStrokes[stroke.id];
+
   const exists = strokes.some((item) => item.id === stroke.id);
 
   if (!exists) {
@@ -1039,12 +1315,39 @@ socket.on("stroke-add", (stroke) => {
 });
 
 socket.on("stroke-remove", (data) => {
+  delete activeRemoteStrokes[data.strokeId];
+
   strokes = strokes.filter((stroke) => stroke.id !== data.strokeId);
+
+  if (selectedStrokeId === data.strokeId) {
+    selectedStrokeId = null;
+  }
+
+  requestRedraw();
+});
+
+socket.on("stroke-update", (updatedStroke) => {
+  delete activeRemoteStrokes[updatedStroke.id];
+
+  const index = strokes.findIndex((stroke) => stroke.id === updatedStroke.id);
+
+  if (index === -1) {
+    strokes.push(updatedStroke);
+  } else {
+    strokes[index] = updatedStroke;
+  }
+
   requestRedraw();
 });
 
 socket.on("clear", () => {
   strokes = [];
+  selectedStrokeId = null;
+
+  Object.keys(activeRemoteStrokes).forEach((id) => {
+    delete activeRemoteStrokes[id];
+  });
+
   requestRedraw();
 });
 

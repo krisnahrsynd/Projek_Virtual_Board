@@ -236,6 +236,14 @@ canvas.text-cursor {
   cursor: text;
 }
 
+canvas.select-cursor {
+  cursor: grab;
+}
+
+canvas.select-cursor:active {
+  cursor: grabbing;
+}
+
 /* ADMIN ROOM MANAGEMENT */
 
 .admin-page {

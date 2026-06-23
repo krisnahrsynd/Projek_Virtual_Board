@@ -214,9 +214,7 @@ function trimRoomIfNeeded(room) {
   }
 }
 
-/* =========================
-   ADMIN API
-========================= */
+/* ADMIN API */
 
 function requireAdmin(req, res, next) {
   const expectedPin = process.env.ADMIN_PIN;
@@ -242,9 +240,7 @@ function getLastActivity(room) {
 
   if (strokes.length === 0) return null;
 
-  return Math.max(
-    ...strokes.map((stroke) => Number(stroke.createdAt) || 0)
-  );
+  return Math.max(...strokes.map((stroke) => Number(stroke.createdAt) || 0));
 }
 
 function getRoomSummary(roomId, room) {
@@ -401,9 +397,7 @@ app.post("/api/admin/save", requireAdmin, (req, res) => {
   });
 });
 
-/* =========================
-   SOCKET.IO BOARD
-========================= */
+/* SOCKET.IO */
 
 loadRoomsFromDisk();
 
@@ -438,6 +432,32 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("room-users", getRoomUsers(roomId));
 
     console.log(`${username} joined room ${roomId} as ${role}`);
+  });
+
+  socket.on("stroke-progress", (rawStroke = {}) => {
+    const roomId = socket.roomId || rawStroke.roomId;
+
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
+    const room = rooms[roomId];
+
+    if (room.locked && !isTeacher(socket)) return;
+
+    const stroke = normalizeStroke(socket, rawStroke);
+
+    socket.to(roomId).emit("stroke-progress", stroke);
+  });
+
+  socket.on("stroke-cancel", (data = {}) => {
+    const roomId = socket.roomId || data.roomId;
+
+    if (!roomId) return;
+
+    socket.to(roomId).emit("stroke-cancel", {
+      id: String(data.id || "")
+    });
   });
 
   socket.on("stroke-add", (rawStroke = {}) => {
@@ -491,6 +511,54 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("stroke-remove", {
       strokeId
     });
+  });
+
+  socket.on("stroke-update", (rawStroke = {}) => {
+    const roomId = socket.roomId || rawStroke.roomId;
+
+    if (!roomId) return;
+
+    createRoomIfNotExists(roomId);
+
+    const room = rooms[roomId];
+
+    if (room.locked && !isTeacher(socket)) return;
+
+    const strokeId = String(rawStroke.id || "");
+
+    const index = room.strokes.findIndex((stroke) => stroke.id === strokeId);
+
+    if (index === -1) return;
+
+    const existingStroke = room.strokes[index];
+
+    if (!canModifyStroke(socket, existingStroke)) return;
+
+    const updatedStroke = normalizeStroke(socket, {
+      ...existingStroke,
+      ...rawStroke,
+      id: existingStroke.id,
+      roomId,
+      ownerId: existingStroke.ownerId,
+      username: existingStroke.username,
+      role: existingStroke.role,
+      createdAt: existingStroke.createdAt
+    });
+
+    updatedStroke.id = existingStroke.id;
+    updatedStroke.roomId = roomId;
+    updatedStroke.ownerId = existingStroke.ownerId;
+    updatedStroke.username = existingStroke.username;
+    updatedStroke.role = existingStroke.role;
+    updatedStroke.createdAt = existingStroke.createdAt;
+
+    if (!isValidStroke(updatedStroke)) return;
+
+    room.strokes[index] = updatedStroke;
+
+    scheduleSave();
+
+    io.to(roomId).emit("stroke-update", updatedStroke);
   });
 
   socket.on("undo", (data = {}) => {
