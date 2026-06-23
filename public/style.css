@@ -162,6 +162,7 @@ button:disabled {
   background: #f3f4f6;
   color: #374151;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .main-layout {
@@ -231,9 +232,13 @@ canvas.eraser-cursor {
   cursor: cell;
 }
 
+canvas.text-cursor {
+  cursor: text;
+}
+
 /* RESPONSIVE */
 
-@media (max-width: 900px) {
+@media (max-width: 1050px) {
   .topbar {
     height: auto;
     min-height: 56px;
@@ -258,11 +263,11 @@ canvas.eraser-cursor {
   }
 
   .main-layout {
-    height: calc(100vh - 160px);
+    height: calc(100vh - 175px);
   }
 
   .sidebar {
-    width: 180px;
+    width: 190px;
   }
 }
 
@@ -272,10 +277,15 @@ canvas.eraser-cursor {
   }
 
   .main-layout {
-    height: calc(100vh - 170px);
+    height: calc(100vh - 190px);
   }
 
   .tool-size input[type="range"] {
     width: 90px;
+  }
+
+  .status-text {
+    width: 100%;
+    margin-left: 0;
   }
 }

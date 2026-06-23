@@ -15,9 +15,15 @@ const backBtn = document.getElementById("backBtn");
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const lockBtn = document.getElementById("lockBtn");
+const exportBtn = document.getElementById("exportBtn");
 
 const penTool = document.getElementById("penTool");
 const eraserTool = document.getElementById("eraserTool");
+const textTool = document.getElementById("textTool");
+const lineTool = document.getElementById("lineTool");
+const rectTool = document.getElementById("rectTool");
+const circleTool = document.getElementById("circleTool");
+
 const colorPicker = document.getElementById("colorPicker");
 const sizeSlider = document.getElementById("sizeSlider");
 const sizeLabel = document.getElementById("sizeLabel");
@@ -51,10 +57,15 @@ let color = role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR;
 let size = role === "teacher" ? 4 : 3;
 
 let redrawPending = false;
+let lastCursorEmit = 0;
+
+const CURSOR_INTERVAL = 35;
 
 const activePointers = {};
 const activeStrokes = {};
+const activeShapes = {};
 const activeErasers = {};
+const remoteCursors = {};
 
 colorPicker.value = color;
 sizeSlider.value = size;
@@ -68,17 +79,38 @@ function setStatus(text) {
   statusText.textContent = text;
 }
 
+function setTool(nextTool) {
+  tool = nextTool;
+  updateToolUI();
+}
+
 function updateToolUI() {
-  penTool.classList.toggle("active", tool === "pen");
-  eraserTool.classList.toggle("active", tool === "eraser");
+  const buttons = [
+    [penTool, "pen"],
+    [eraserTool, "eraser"],
+    [textTool, "text"],
+    [lineTool, "line"],
+    [rectTool, "rect"],
+    [circleTool, "circle"]
+  ];
+
+  buttons.forEach(([button, value]) => {
+    button.classList.toggle("active", tool === value);
+  });
 
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
+  canvas.classList.toggle("text-cursor", tool === "text");
 
-  if (tool === "pen") {
-    setStatus("Mode: Pen");
-  } else {
-    setStatus("Mode: Eraser");
-  }
+  const label = {
+    pen: "Mode: Pen",
+    eraser: "Mode: Eraser",
+    text: "Mode: Text",
+    line: "Mode: Line",
+    rect: "Mode: Rectangle",
+    circle: "Mode: Circle"
+  };
+
+  setStatus(label[tool] || "Ready");
 }
 
 function updateTeacherControls() {
@@ -124,45 +156,37 @@ function resizeCanvas() {
   requestRedraw();
 }
 
-function clearScreenOnly() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function clearScreenOnly(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY, includeOutside = true) {
+  if (includeOutside) {
+    renderCtx.clearRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = "#e5e7eb";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+    renderCtx.fillStyle = "#e5e7eb";
+    renderCtx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(
-    offsetX,
-    offsetY,
-    VIRTUAL_WIDTH * scale,
-    VIRTUAL_HEIGHT * scale
-  );
+  renderCtx.fillStyle = "#ffffff";
+  renderCtx.fillRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
 
-  ctx.strokeStyle = "#111827";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(
-    offsetX,
-    offsetY,
-    VIRTUAL_WIDTH * scale,
-    VIRTUAL_HEIGHT * scale
-  );
+  renderCtx.strokeStyle = "#111827";
+  renderCtx.lineWidth = Math.max(1, 2 * s);
+  renderCtx.strokeRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
 }
 
-function drawSplitLine() {
+function drawSplitLine(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY) {
   if (!splitMode) return;
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(offsetX + (VIRTUAL_WIDTH / 2) * scale, offsetY);
-  ctx.lineTo(
-    offsetX + (VIRTUAL_WIDTH / 2) * scale,
-    offsetY + VIRTUAL_HEIGHT * scale
+  renderCtx.save();
+  renderCtx.beginPath();
+  renderCtx.moveTo(ox + (VIRTUAL_WIDTH / 2) * s, oy);
+  renderCtx.lineTo(
+    ox + (VIRTUAL_WIDTH / 2) * s,
+    oy + VIRTUAL_HEIGHT * s
   );
-  ctx.strokeStyle = "#ef4444";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 10]);
-  ctx.stroke();
-  ctx.restore();
+  renderCtx.strokeStyle = "#ef4444";
+  renderCtx.lineWidth = Math.max(1, 2 * s);
+  renderCtx.setLineDash([10 * s, 10 * s]);
+  renderCtx.stroke();
+  renderCtx.restore();
 }
 
 function drawLockedOverlay() {
@@ -206,49 +230,51 @@ function isInsideBoard(x, y) {
   return x >= 0 && x <= VIRTUAL_WIDTH && y >= 0 && y <= VIRTUAL_HEIGHT;
 }
 
-function drawStroke(stroke) {
+function getStrokeColor(stroke) {
+  return stroke.color || (stroke.role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR);
+}
+
+function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
   const pts = stroke.points;
 
   if (!pts || pts.length === 0) return;
 
-  const strokeColor =
-    stroke.color || (stroke.role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR);
+  const strokeColor = getStrokeColor(stroke);
+  const strokeSize = Math.max(1, (stroke.size || 3) * s);
 
-  const strokeSize = Math.max(1, (stroke.size || 3) * scale);
+  renderCtx.save();
 
-  ctx.save();
-
-  ctx.strokeStyle = strokeColor;
-  ctx.fillStyle = strokeColor;
-  ctx.lineWidth = strokeSize;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
+  renderCtx.strokeStyle = strokeColor;
+  renderCtx.fillStyle = strokeColor;
+  renderCtx.lineWidth = strokeSize;
+  renderCtx.lineCap = "round";
+  renderCtx.lineJoin = "round";
 
   if (pts.length === 1) {
-    ctx.beginPath();
-    ctx.arc(
-      offsetX + pts[0].x * scale,
-      offsetY + pts[0].y * scale,
+    renderCtx.beginPath();
+    renderCtx.arc(
+      ox + pts[0].x * s,
+      oy + pts[0].y * s,
       strokeSize / 2,
       0,
       Math.PI * 2
     );
-    ctx.fill();
-    ctx.restore();
+    renderCtx.fill();
+    renderCtx.restore();
     return;
   }
 
-  ctx.beginPath();
+  renderCtx.beginPath();
 
-  ctx.moveTo(
-    offsetX + pts[0].x * scale,
-    offsetY + pts[0].y * scale
+  renderCtx.moveTo(
+    ox + pts[0].x * s,
+    oy + pts[0].y * s
   );
 
   if (pts.length === 2) {
-    ctx.lineTo(
-      offsetX + pts[1].x * scale,
-      offsetY + pts[1].y * scale
+    renderCtx.lineTo(
+      ox + pts[1].x * s,
+      oy + pts[1].y * s
     );
   } else {
     for (let i = 1; i < pts.length - 1; i++) {
@@ -258,34 +284,166 @@ function drawStroke(stroke) {
       const midX = (current.x + next.x) / 2;
       const midY = (current.y + next.y) / 2;
 
-      ctx.quadraticCurveTo(
-        offsetX + current.x * scale,
-        offsetY + current.y * scale,
-        offsetX + midX * scale,
-        offsetY + midY * scale
+      renderCtx.quadraticCurveTo(
+        ox + current.x * s,
+        oy + current.y * s,
+        ox + midX * s,
+        oy + midY * s
       );
     }
 
     const last = pts[pts.length - 1];
 
-    ctx.lineTo(
-      offsetX + last.x * scale,
-      offsetY + last.y * scale
+    renderCtx.lineTo(
+      ox + last.x * s,
+      oy + last.y * s
     );
   }
 
-  ctx.stroke();
-  ctx.restore();
+  renderCtx.stroke();
+  renderCtx.restore();
+}
+
+function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 2) return;
+
+  const a = pts[0];
+  const b = pts[1];
+
+  renderCtx.save();
+
+  renderCtx.strokeStyle = getStrokeColor(stroke);
+  renderCtx.lineWidth = Math.max(1, (stroke.size || 3) * s);
+  renderCtx.lineCap = "round";
+  renderCtx.lineJoin = "round";
+
+  renderCtx.beginPath();
+
+  if (stroke.shape === "line") {
+    renderCtx.moveTo(ox + a.x * s, oy + a.y * s);
+    renderCtx.lineTo(ox + b.x * s, oy + b.y * s);
+  }
+
+  if (stroke.shape === "rect") {
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const w = Math.abs(b.x - a.x);
+    const h = Math.abs(b.y - a.y);
+
+    renderCtx.rect(ox + x * s, oy + y * s, w * s, h * s);
+  }
+
+  if (stroke.shape === "circle") {
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const rx = Math.abs(b.x - a.x) / 2;
+    const ry = Math.abs(b.y - a.y) / 2;
+
+    renderCtx.ellipse(
+      ox + cx * s,
+      oy + cy * s,
+      rx * s,
+      ry * s,
+      0,
+      0,
+      Math.PI * 2
+    );
+  }
+
+  renderCtx.stroke();
+  renderCtx.restore();
+}
+
+function drawTextStroke(renderCtx, stroke, s, ox, oy) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 1) return;
+
+  const text = String(stroke.text || "");
+  if (!text.trim()) return;
+
+  const p = pts[0];
+  const fontSize = stroke.fontSize || 28;
+
+  renderCtx.save();
+  renderCtx.fillStyle = getStrokeColor(stroke);
+  renderCtx.font = `${fontSize * s}px Arial`;
+  renderCtx.textBaseline = "top";
+
+  const lines = text.split("\n").slice(0, 8);
+  const lineHeight = fontSize * 1.25;
+
+  lines.forEach((line, index) => {
+    renderCtx.fillText(
+      line,
+      ox + p.x * s,
+      oy + (p.y + index * lineHeight) * s
+    );
+  });
+
+  renderCtx.restore();
+}
+
+function drawStrokeOn(renderCtx, stroke, s = scale, ox = offsetX, oy = offsetY) {
+  if (stroke.type === "shape") {
+    drawShapeStroke(renderCtx, stroke, s, ox, oy);
+    return;
+  }
+
+  if (stroke.type === "text") {
+    drawTextStroke(renderCtx, stroke, s, ox, oy);
+    return;
+  }
+
+  drawFreehandStroke(renderCtx, stroke, s, ox, oy);
+}
+
+function drawRemoteCursors() {
+  Object.values(remoteCursors).forEach((cursor) => {
+    ctx.save();
+
+    const x = offsetX + cursor.x * scale;
+    const y = offsetY + cursor.y * scale;
+
+    const cursorColor = cursor.role === "teacher" ? "#111827" : "#2563eb";
+
+    ctx.fillStyle = cursorColor;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 16, y + 6);
+    ctx.lineTo(x + 7, y + 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = "12px Arial";
+    ctx.fillStyle = cursorColor;
+
+    const label = `${cursor.username} (${cursor.role === "teacher" ? "Guru" : "Siswa"})`;
+    const labelWidth = ctx.measureText(label).width + 12;
+
+    ctx.fillRect(x + 12, y + 14, labelWidth, 22);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, x + 18, y + 29);
+
+    ctx.restore();
+  });
 }
 
 function redrawAll() {
   clearScreenOnly();
 
-  strokes.forEach(drawStroke);
-  Object.values(activeStrokes).forEach(drawStroke);
+  strokes.forEach((stroke) => drawStrokeOn(ctx, stroke));
+  Object.values(activeStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
+  Object.values(activeShapes).forEach((stroke) => drawStrokeOn(ctx, stroke));
 
   drawSplitLine();
   drawLockedOverlay();
+  drawRemoteCursors();
 }
 
 function requestRedraw() {
@@ -330,11 +488,113 @@ function distancePointToSegment(point, a, b) {
   return distance(point, projected);
 }
 
+function getShapeSegments(stroke) {
+  const pts = stroke.points;
+  if (!pts || pts.length < 2) return [];
+
+  const a = pts[0];
+  const b = pts[1];
+
+  if (stroke.shape === "line") {
+    return [[a, b]];
+  }
+
+  if (stroke.shape === "rect") {
+    const x1 = Math.min(a.x, b.x);
+    const y1 = Math.min(a.y, b.y);
+    const x2 = Math.max(a.x, b.x);
+    const y2 = Math.max(a.y, b.y);
+
+    const p1 = { x: x1, y: y1 };
+    const p2 = { x: x2, y: y1 };
+    const p3 = { x: x2, y: y2 };
+    const p4 = { x: x1, y: y2 };
+
+    return [
+      [p1, p2],
+      [p2, p3],
+      [p3, p4],
+      [p4, p1]
+    ];
+  }
+
+  if (stroke.shape === "circle") {
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const rx = Math.abs(b.x - a.x) / 2;
+    const ry = Math.abs(b.y - a.y) / 2;
+
+    const segments = [];
+    const steps = 48;
+
+    for (let i = 0; i < steps; i++) {
+      const t1 = (i / steps) * Math.PI * 2;
+      const t2 = ((i + 1) / steps) * Math.PI * 2;
+
+      segments.push([
+        {
+          x: cx + Math.cos(t1) * rx,
+          y: cy + Math.sin(t1) * ry
+        },
+        {
+          x: cx + Math.cos(t2) * rx,
+          y: cy + Math.sin(t2) * ry
+        }
+      ]);
+    }
+
+    return segments;
+  }
+
+  return [];
+}
+
+function getVirtualTextBox(stroke) {
+  const p = stroke.points && stroke.points[0];
+  if (!p) return null;
+
+  const text = String(stroke.text || "");
+  const fontSize = stroke.fontSize || 28;
+  const lines = text.split("\n").slice(0, 8);
+
+  const maxLength = Math.max(...lines.map((line) => line.length), 1);
+  const width = maxLength * fontSize * 0.62;
+  const height = lines.length * fontSize * 1.25;
+
+  return {
+    x: p.x,
+    y: p.y,
+    width,
+    height
+  };
+}
+
 function canEraseLocal(stroke) {
   return role === "teacher" || stroke.username === username;
 }
 
 function strokeHitTest(stroke, point, radius) {
+  if (stroke.type === "text") {
+    const box = getVirtualTextBox(stroke);
+    if (!box) return false;
+
+    return (
+      point.x >= box.x - radius &&
+      point.x <= box.x + box.width + radius &&
+      point.y >= box.y - radius &&
+      point.y <= box.y + box.height + radius
+    );
+  }
+
+  if (stroke.type === "shape") {
+    const threshold = radius + (stroke.size || 3) / 2;
+    const segments = getShapeSegments(stroke);
+
+    return segments.some(([a, b]) => {
+      return distancePointToSegment(point, a, b) <= threshold;
+    });
+  }
+
   const pts = stroke.points || [];
 
   if (pts.length === 0) return false;
@@ -385,12 +645,43 @@ function eraseAt(pos) {
   }
 }
 
-function startStroke(pointerId, pos) {
+function createTextAt(pos) {
+  const text = window.prompt("Masukkan teks");
+
+  if (!text || !text.trim()) {
+    setStatus("Text dibatalkan.");
+    return;
+  }
+
+  const stroke = {
+    id: uid(),
+    roomId,
+    username,
+    role,
+    type: "text",
+    tool: "text",
+    text,
+    color,
+    size,
+    fontSize: Math.max(16, Number(sizeSlider.value) * 5 + 14),
+    points: [pos],
+    createdAt: Date.now()
+  };
+
+  strokes.push(stroke);
+
+  socket.emit("stroke-add", stroke);
+
+  requestRedraw();
+}
+
+function startFreehandStroke(pointerId, pos) {
   activeStrokes[pointerId] = {
     id: uid(),
     roomId,
     username,
     role,
+    type: "freehand",
     tool: "pen",
     color,
     size,
@@ -399,7 +690,7 @@ function startStroke(pointerId, pos) {
   };
 }
 
-function addPoint(pointerId, pos) {
+function addFreehandPoint(pointerId, pos) {
   const stroke = activeStrokes[pointerId];
 
   if (!stroke) return;
@@ -411,7 +702,7 @@ function addPoint(pointerId, pos) {
   stroke.points.push(pos);
 }
 
-function finishStroke(pointerId) {
+function finishFreehandStroke(pointerId) {
   const stroke = activeStrokes[pointerId];
 
   if (!stroke) return;
@@ -428,6 +719,65 @@ function finishStroke(pointerId) {
   socket.emit("stroke-add", stroke);
 
   requestRedraw();
+}
+
+function startShape(pointerId, pos, shape) {
+  activeShapes[pointerId] = {
+    id: uid(),
+    roomId,
+    username,
+    role,
+    type: "shape",
+    tool: shape,
+    shape,
+    color,
+    size,
+    points: [pos, pos],
+    createdAt: Date.now()
+  };
+}
+
+function updateShape(pointerId, pos) {
+  const shapeStroke = activeShapes[pointerId];
+
+  if (!shapeStroke) return;
+
+  shapeStroke.points[1] = pos;
+}
+
+function finishShape(pointerId) {
+  const shapeStroke = activeShapes[pointerId];
+
+  if (!shapeStroke) return;
+
+  delete activeShapes[pointerId];
+
+  const a = shapeStroke.points[0];
+  const b = shapeStroke.points[1];
+
+  if (distance(a, b) < 3) {
+    requestRedraw();
+    return;
+  }
+
+  strokes.push(shapeStroke);
+
+  socket.emit("stroke-add", shapeStroke);
+
+  requestRedraw();
+}
+
+function emitCursor(pos) {
+  const now = Date.now();
+
+  if (now - lastCursorEmit < CURSOR_INTERVAL) return;
+
+  lastCursorEmit = now;
+
+  socket.emit("cursor-move", {
+    x: pos.x,
+    y: pos.y
+  });
 }
 
 function stopPointer(event) {
@@ -448,7 +798,13 @@ function stopPointer(event) {
     return;
   }
 
-  finishStroke(pointerId);
+  finishFreehandStroke(pointerId);
+  finishShape(pointerId);
+}
+
+function handlePointerLeave(event) {
+  socket.emit("cursor-leave");
+  stopPointer(event);
 }
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -471,24 +827,40 @@ canvas.addEventListener("pointerdown", (event) => {
     // aman diabaikan
   }
 
+  if (tool === "text") {
+    createTextAt(pos);
+    delete activePointers[event.pointerId];
+    return;
+  }
+
   if (tool === "eraser") {
     activeErasers[event.pointerId] = true;
     eraseAt(pos);
     return;
   }
 
-  startStroke(event.pointerId, pos);
+  if (tool === "line" || tool === "rect" || tool === "circle") {
+    startShape(event.pointerId, pos, tool);
+    requestRedraw();
+    return;
+  }
+
+  startFreehandStroke(event.pointerId, pos);
   requestRedraw();
 });
 
 canvas.addEventListener("pointermove", (event) => {
   event.preventDefault();
 
+  const pos = toVirtualPosition(event);
+
+  if (isInsideBoard(pos.x, pos.y)) {
+    emitCursor(pos);
+  }
+
   if (!activePointers[event.pointerId]) return;
 
   if (locked && role !== "teacher") return;
-
-  const pos = toVirtualPosition(event);
 
   if (!isInsideBoard(pos.x, pos.y)) {
     stopPointer(event);
@@ -500,24 +872,27 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
 
-  addPoint(event.pointerId, pos);
+  if (activeShapes[event.pointerId]) {
+    updateShape(event.pointerId, pos);
+    requestRedraw();
+    return;
+  }
+
+  addFreehandPoint(event.pointerId, pos);
   requestRedraw();
 });
 
 canvas.addEventListener("pointerup", stopPointer);
-canvas.addEventListener("pointerleave", stopPointer);
-canvas.addEventListener("pointercancel", stopPointer);
-canvas.addEventListener("pointerout", stopPointer);
+canvas.addEventListener("pointerleave", handlePointerLeave);
+canvas.addEventListener("pointercancel", handlePointerLeave);
+canvas.addEventListener("pointerout", handlePointerLeave);
 
-penTool.addEventListener("click", () => {
-  tool = "pen";
-  updateToolUI();
-});
-
-eraserTool.addEventListener("click", () => {
-  tool = "eraser";
-  updateToolUI();
-});
+penTool.addEventListener("click", () => setTool("pen"));
+eraserTool.addEventListener("click", () => setTool("eraser"));
+textTool.addEventListener("click", () => setTool("text"));
+lineTool.addEventListener("click", () => setTool("line"));
+rectTool.addEventListener("click", () => setTool("rect"));
+circleTool.addEventListener("click", () => setTool("circle"));
 
 colorPicker.addEventListener("input", (event) => {
   color = event.target.value;
@@ -534,6 +909,32 @@ undoBtn.addEventListener("click", () => {
 
 redoBtn.addEventListener("click", () => {
   socket.emit("redo", { roomId });
+});
+
+exportBtn.addEventListener("click", () => {
+  const exportCanvas = document.createElement("canvas");
+  const exportCtx = exportCanvas.getContext("2d");
+
+  exportCanvas.width = VIRTUAL_WIDTH;
+  exportCanvas.height = VIRTUAL_HEIGHT;
+
+  exportCtx.fillStyle = "#ffffff";
+  exportCtx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+  strokes.forEach((stroke) => {
+    drawStrokeOn(exportCtx, stroke, 1, 0, 0);
+  });
+
+  if (splitMode) {
+    drawSplitLine(exportCtx, 1, 0, 0);
+  }
+
+  const link = document.createElement("a");
+  link.download = `${roomId}-virtual-board.png`;
+  link.href = exportCanvas.toDataURL("image/png");
+  link.click();
+
+  setStatus("Board berhasil diekspor ke PNG.");
 });
 
 clearBtn.addEventListener("click", () => {
@@ -577,21 +978,19 @@ lockBtn.addEventListener("click", () => {
 });
 
 backBtn.addEventListener("click", () => {
+  socket.emit("cursor-leave");
   window.location.href = "/";
 });
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
 
-  if (key === "p") {
-    tool = "pen";
-    updateToolUI();
-  }
-
-  if (key === "e") {
-    tool = "eraser";
-    updateToolUI();
-  }
+  if (key === "p") setTool("pen");
+  if (key === "e") setTool("eraser");
+  if (key === "t") setTool("text");
+  if (key === "l") setTool("line");
+  if (key === "r") setTool("rect");
+  if (key === "c") setTool("circle");
 
   if ((event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey) {
     event.preventDefault();
@@ -666,7 +1065,21 @@ socket.on("room-users", (users) => {
   });
 });
 
+socket.on("cursor-move", (cursor) => {
+  remoteCursors[cursor.id] = cursor;
+  requestRedraw();
+});
+
+socket.on("cursor-leave", (cursor) => {
+  delete remoteCursors[cursor.id];
+  requestRedraw();
+});
+
 window.addEventListener("resize", resizeCanvas);
+
+window.addEventListener("beforeunload", () => {
+  socket.emit("cursor-leave");
+});
 
 updateTeacherControls();
 updateToolUI();
