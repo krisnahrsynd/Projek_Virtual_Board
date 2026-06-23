@@ -32,6 +32,21 @@ const textTool = document.getElementById("textTool");
 const imageTool = document.getElementById("imageTool");
 const imageInput = document.getElementById("imageInput");
 
+const materialTool = document.getElementById("materialTool");
+const materialInput = document.getElementById("materialInput");
+const materialUploadBtn = document.getElementById("materialUploadBtn");
+const materialList = document.getElementById("materialList");
+const materialLayer = document.getElementById("materialLayer");
+const materialStage = document.getElementById("materialStage");
+const materialFrame = document.getElementById("materialFrame");
+const materialFallback = document.getElementById("materialFallback");
+const materialFallbackText = document.getElementById("materialFallbackText");
+const materialOpenLink = document.getElementById("materialOpenLink");
+const materialBadge = document.getElementById("materialBadge");
+const materialName = document.getElementById("materialName");
+const materialOpenBtn = document.getElementById("materialOpenBtn");
+const materialHideBtn = document.getElementById("materialHideBtn");
+
 const shapeMenuBtn = document.getElementById("shapeMenuBtn");
 const shapeMenu = document.getElementById("shapeMenu");
 const lineTool = document.getElementById("lineTool");
@@ -88,6 +103,10 @@ let lastPanScreen = null;
 let strokes = [];
 let splitMode = false;
 let locked = false;
+
+let materials = [];
+let currentMaterial = null;
+let materialVisible = true;
 
 let tool = "pen";
 let previousToolBeforeSpace = null;
@@ -192,6 +211,7 @@ function updateCamera() {
   offsetY = getCenteredOffsetY() + panY;
 
   updateZoomLabel();
+  positionMaterialLayer();
 }
 
 function fitView() {
@@ -333,6 +353,7 @@ function updateToolUI() {
     [eraserTool, "eraser"],
     [textTool, "text"],
     [imageTool, "image"],
+    [materialTool, "material"],
     [lineTool, "line"],
     [rectTool, "rect"],
     [circleTool, "circle"]
@@ -359,6 +380,7 @@ function updateToolUI() {
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
   canvas.classList.toggle("text-cursor", tool === "text");
   canvas.classList.toggle("image-cursor", tool === "image");
+  canvas.classList.toggle("material-cursor", tool === "material");
 
   const label = {
     pan: "Mode: Pan",
@@ -367,6 +389,7 @@ function updateToolUI() {
     eraser: "Mode: Eraser",
     text: "Mode: Text",
     image: "Mode: Image",
+    material: "Mode: Material",
     line: "Mode: Line",
     rect: "Mode: Rectangle",
     circle: "Mode: Circle"
@@ -416,6 +439,10 @@ function resizeCanvas() {
   requestRedraw();
 }
 
+function hasVisibleMaterial() {
+  return Boolean(currentMaterial && materialVisible);
+}
+
 function clearScreenOnly(
   renderCtx = ctx,
   s = scale,
@@ -430,8 +457,10 @@ function clearScreenOnly(
     renderCtx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  renderCtx.fillStyle = "#ffffff";
-  renderCtx.fillRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
+  if (!hasVisibleMaterial() || renderCtx !== ctx) {
+    renderCtx.fillStyle = "#ffffff";
+    renderCtx.fillRect(ox, oy, VIRTUAL_WIDTH * s, VIRTUAL_HEIGHT * s);
+  }
 
   renderCtx.strokeStyle = "#111827";
   renderCtx.lineWidth = Math.max(1, 2 * s);
@@ -1368,6 +1397,231 @@ async function addImageFileToBoard(file) {
   }
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error("Gagal membaca file."));
+    reader.onload = () => resolve(reader.result);
+
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadMaterialFile(file) {
+  try {
+    if (!file) return;
+
+    const allowed =
+      file.type === "application/pdf" ||
+      file.type === "application/vnd.ms-powerpoint" ||
+      file.type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+      file.name.toLowerCase().endsWith(".pdf") ||
+      file.name.toLowerCase().endsWith(".ppt") ||
+      file.name.toLowerCase().endsWith(".pptx");
+
+    if (!allowed) {
+      alert("Hanya file PDF, PPT, atau PPTX yang bisa diupload.");
+      return;
+    }
+
+    if (file.size > 18 * 1024 * 1024) {
+      alert("File terlalu besar. Maksimal sekitar 18MB.");
+      return;
+    }
+
+    setStatus("Mengupload materi...");
+
+    const dataUrl = await readFileAsDataUrl(file);
+
+    const response = await fetch("/api/materials/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        roomId,
+        username,
+        role,
+        filename: file.name,
+        dataUrl
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Gagal upload materi.");
+    }
+
+    materials = result.materials || [];
+    setCurrentMaterial(result.material, true);
+
+    sidePanel.classList.add("open");
+    renderMaterialList();
+
+    setStatus("Materi berhasil diupload.");
+  } catch (error) {
+    alert(error.message);
+    setStatus("Gagal upload materi.");
+  } finally {
+    materialInput.value = "";
+  }
+}
+
+function absoluteUrl(relativeUrl) {
+  return new URL(relativeUrl, window.location.origin).toString();
+}
+
+function getMaterialViewerUrl(material) {
+  if (!material) return "";
+
+  const url = absoluteUrl(material.url);
+
+  const name = String(material.filename || "").toLowerCase();
+  const mime = String(material.mimeType || "").toLowerCase();
+
+  if (mime === "application/pdf" || name.endsWith(".pdf")) {
+    return material.url;
+  }
+
+  if (name.endsWith(".ppt") || name.endsWith(".pptx") || mime.includes("powerpoint")) {
+    return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
+  }
+
+  return material.url;
+}
+
+function setCurrentMaterial(material, visible = true) {
+  currentMaterial = material || null;
+  materialVisible = Boolean(material && visible);
+
+  renderMaterialViewer();
+  renderMaterialList();
+  requestRedraw();
+}
+
+function renderMaterialViewer() {
+  if (!currentMaterial || !materialVisible) {
+    materialLayer.classList.add("hidden");
+    materialBadge.classList.add("hidden");
+    materialFrame.removeAttribute("src");
+    materialOpenLink.href = "#";
+    return;
+  }
+
+  materialLayer.classList.remove("hidden");
+  materialBadge.classList.remove("hidden");
+
+  materialName.textContent = currentMaterial.filename || "Material";
+  materialOpenLink.href = currentMaterial.url;
+  materialOpenBtn.dataset.url = currentMaterial.url;
+
+  const viewerUrl = getMaterialViewerUrl(currentMaterial);
+
+  materialFrame.src = viewerUrl;
+
+  const lowerName = String(currentMaterial.filename || "").toLowerCase();
+
+  if (lowerName.endsWith(".ppt") || lowerName.endsWith(".pptx")) {
+    materialFallback.classList.remove("hidden");
+    materialFallbackText.textContent =
+      "Preview PPT/PPTX memakai Office Web Viewer. Jika belum tampil, klik Open Material.";
+  } else {
+    materialFallback.classList.add("hidden");
+  }
+
+  positionMaterialLayer();
+}
+
+function positionMaterialLayer() {
+  if (!materialStage) return;
+
+  materialStage.style.left = `${offsetX}px`;
+  materialStage.style.top = `${offsetY}px`;
+  materialStage.style.width = `${VIRTUAL_WIDTH * scale}px`;
+  materialStage.style.height = `${VIRTUAL_HEIGHT * scale}px`;
+}
+
+function renderMaterialList() {
+  materialList.innerHTML = "";
+
+  if (!materials || materials.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-material";
+    empty.textContent = "Belum ada materi.";
+    materialList.appendChild(empty);
+    return;
+  }
+
+  materials
+    .slice()
+    .sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0))
+    .forEach((material) => {
+      const item = document.createElement("div");
+      item.className = "material-item";
+
+      if (currentMaterial && currentMaterial.id === material.id) {
+        item.classList.add("active");
+      }
+
+      const info = document.createElement("div");
+      info.className = "material-info";
+
+      const title = document.createElement("strong");
+      title.textContent = material.filename || "Material";
+
+      const meta = document.createElement("span");
+      meta.textContent = `${Math.max(1, Math.round((material.sizeBytes || 0) / 1024))} KB`;
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "material-actions";
+
+      const showBtn = document.createElement("button");
+      showBtn.type = "button";
+      showBtn.textContent = "Show";
+      showBtn.addEventListener("click", async () => {
+        const response = await fetch("/api/materials/set-current", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            roomId,
+            materialId: material.id
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          alert(result.error || "Gagal membuka materi.");
+          return;
+        }
+
+        setCurrentMaterial(result.material, true);
+      });
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.textContent = "Open";
+      openBtn.addEventListener("click", () => {
+        window.open(material.url, "_blank");
+      });
+
+      actions.appendChild(showBtn);
+      actions.appendChild(openBtn);
+
+      item.appendChild(info);
+      item.appendChild(actions);
+
+      materialList.appendChild(item);
+    });
+}
+
 function startFreehandStroke(pointerId, pos) {
   activeStrokes[pointerId] = {
     id: uid(),
@@ -1538,6 +1792,11 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  if (tool === "material") {
+    materialInput.click();
+    return;
+  }
+
   if (locked && role !== "teacher") {
     setStatus("Board sedang dikunci oleh guru.");
     return;
@@ -1683,6 +1942,47 @@ imageInput.addEventListener("change", (event) => {
   if (!file) return;
 
   addImageFileToBoard(file);
+});
+
+materialTool.addEventListener("click", () => {
+  setTool("material");
+  materialInput.click();
+});
+
+materialUploadBtn.addEventListener("click", () => {
+  materialInput.click();
+});
+
+materialInput.addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+
+  if (!file) return;
+
+  uploadMaterialFile(file);
+});
+
+materialOpenBtn.addEventListener("click", () => {
+  if (!currentMaterial) return;
+
+  window.open(currentMaterial.url, "_blank");
+});
+
+materialHideBtn.addEventListener("click", async () => {
+  materialVisible = false;
+  renderMaterialViewer();
+  requestRedraw();
+
+  try {
+    await fetch("/api/materials/clear-current", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ roomId })
+    });
+  } catch (error) {
+    // tetap aman walau gagal
+  }
 });
 
 shapeMenuBtn.addEventListener("click", (event) => {
@@ -1885,6 +2185,11 @@ window.addEventListener("keydown", (event) => {
     imageInput.click();
   }
 
+  if (key === "m") {
+    setTool("material");
+    materialInput.click();
+  }
+
   if (key === "l") setTool("line");
   if (key === "r") setTool("rect");
   if (key === "c") setTool("circle");
@@ -1936,10 +2241,40 @@ socket.on("board-state", (data) => {
   strokes = Array.isArray(data.strokes) ? data.strokes : [];
   splitMode = Boolean(data.splitMode);
   locked = Boolean(data.locked);
+  materials = Array.isArray(data.materials) ? data.materials : [];
+
+  if (data.currentMaterial) {
+    setCurrentMaterial(data.currentMaterial, true);
+  } else {
+    setCurrentMaterial(null, false);
+  }
 
   updateSplitUI();
   updateLockUI();
+  renderMaterialList();
   requestRedraw();
+});
+
+socket.on("material-list", (data) => {
+  materials = Array.isArray(data.materials) ? data.materials : materials;
+
+  if (data.currentMaterial) {
+    setCurrentMaterial(data.currentMaterial, true);
+  }
+
+  renderMaterialList();
+});
+
+socket.on("material-set", (data) => {
+  materials = Array.isArray(data.materials) ? data.materials : materials;
+  setCurrentMaterial(data.material, true);
+  renderMaterialList();
+  setStatus("Materi pembelajaran diperbarui.");
+});
+
+socket.on("material-clear", () => {
+  setCurrentMaterial(null, false);
+  setStatus("Materi disembunyikan.");
 });
 
 socket.on("stroke-progress", (stroke) => {
@@ -2050,3 +2385,4 @@ updateToolUI();
 updateSplitUI();
 updateLockUI();
 resizeCanvas();
+renderMaterialList();

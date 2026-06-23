@@ -8,10 +8,10 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  maxHttpBufferSize: 8 * 1024 * 1024
+  maxHttpBufferSize: 25 * 1024 * 1024
 });
 
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(express.static("public"));
 
 const DATA_DIR =
@@ -20,19 +20,49 @@ const DATA_DIR =
   path.join(__dirname, "data");
 
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
+const MATERIALS_DIR = path.join(DATA_DIR, "materials");
 
 const SAVE_DELAY = 300;
 const MAX_STROKES_PER_ROOM = 10000;
 const MAX_IMAGE_DATA_URL_LENGTH = 6_500_000;
+const MAX_MATERIAL_DATA_URL_LENGTH = 24_000_000;
 
 const rooms = {};
-
 let saveTimer = null;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+
+  if (!fs.existsSync(MATERIALS_DIR)) {
+    fs.mkdirSync(MATERIALS_DIR, { recursive: true });
+  }
+}
+
+function sanitizeFilePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 120);
+}
+
+function safeRoomId(roomId) {
+  return sanitizeFilePart(roomId || "default") || "default";
+}
+
+function materialRoomDir(roomId) {
+  return path.join(MATERIALS_DIR, safeRoomId(roomId));
+}
+
+function ensureMaterialRoomDir(roomId) {
+  const dir = materialRoomDir(roomId);
+
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  return dir;
 }
 
 function toPersistableRooms() {
@@ -43,7 +73,9 @@ function toPersistableRooms() {
       splitMode: Boolean(room.splitMode),
       locked: Boolean(room.locked),
       strokes: Array.isArray(room.strokes) ? room.strokes : [],
-      redoStack: Array.isArray(room.redoStack) ? room.redoStack : []
+      redoStack: Array.isArray(room.redoStack) ? room.redoStack : [],
+      materials: Array.isArray(room.materials) ? room.materials : [],
+      currentMaterialId: room.currentMaterialId || null
     };
   });
 
@@ -90,7 +122,9 @@ function loadRoomsFromDisk() {
         splitMode: Boolean(room.splitMode),
         locked: Boolean(room.locked),
         strokes: Array.isArray(room.strokes) ? room.strokes : [],
-        redoStack: Array.isArray(room.redoStack) ? room.redoStack : []
+        redoStack: Array.isArray(room.redoStack) ? room.redoStack : [],
+        materials: Array.isArray(room.materials) ? room.materials : [],
+        currentMaterialId: room.currentMaterialId || null
       };
     });
 
@@ -107,7 +141,9 @@ function createRoomIfNotExists(roomId) {
       splitMode: false,
       locked: false,
       strokes: [],
-      redoStack: []
+      redoStack: [],
+      materials: [],
+      currentMaterialId: null
     };
 
     scheduleSave();
@@ -237,6 +273,95 @@ function trimRoomIfNeeded(room) {
   }
 }
 
+function dataUrlToBuffer(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+
+  if (!match) {
+    throw new Error("Format file tidak valid.");
+  }
+
+  return {
+    mimeType: match[1],
+    buffer: Buffer.from(match[2], "base64")
+  };
+}
+
+function getExtensionFromMime(mimeType, filename = "") {
+  const lowerName = String(filename).toLowerCase();
+
+  if (lowerName.endsWith(".pdf")) return ".pdf";
+  if (lowerName.endsWith(".ppt")) return ".ppt";
+  if (lowerName.endsWith(".pptx")) return ".pptx";
+
+  if (mimeType === "application/pdf") return ".pdf";
+  if (mimeType === "application/vnd.ms-powerpoint") return ".ppt";
+  if (
+    mimeType ===
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    return ".pptx";
+  }
+
+  return "";
+}
+
+function isAllowedMaterialType(mimeType, filename) {
+  const ext = getExtensionFromMime(mimeType, filename);
+
+  return [".pdf", ".ppt", ".pptx"].includes(ext);
+}
+
+function getMaterialUrl(roomId, storedName) {
+  return `/materials/${encodeURIComponent(safeRoomId(roomId))}/${encodeURIComponent(storedName)}`;
+}
+
+function getCurrentMaterial(roomId) {
+  const room = rooms[roomId];
+
+  if (!room || !room.currentMaterialId) return null;
+
+  return room.materials.find((m) => m.id === room.currentMaterialId) || null;
+}
+
+/* MATERIAL FILE SERVE */
+
+app.get("/materials/:roomId/:fileName", (req, res) => {
+  const roomId = safeRoomId(req.params.roomId);
+  const fileName = sanitizeFilePart(req.params.fileName);
+
+  const filePath = path.join(MATERIALS_DIR, roomId, fileName);
+  const resolved = path.resolve(filePath);
+  const allowedRoot = path.resolve(path.join(MATERIALS_DIR, roomId));
+
+  if (!resolved.startsWith(allowedRoot)) {
+    return res.status(403).send("Forbidden");
+  }
+
+  if (!fs.existsSync(resolved)) {
+    return res.status(404).send("File not found");
+  }
+
+  const ext = path.extname(fileName).toLowerCase();
+
+  if (ext === ".pdf") {
+    res.setHeader("Content-Type", "application/pdf");
+  }
+
+  if (ext === ".ppt") {
+    res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
+  }
+
+  if (ext === ".pptx") {
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+  }
+
+  res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+  res.sendFile(resolved);
+});
+
 /* ADMIN API */
 
 function requireAdmin(req, res, next) {
@@ -287,6 +412,8 @@ function getRoomSummary(roomId, room) {
     shapeCount,
     textCount,
     imageCount,
+    materialCount: Array.isArray(room.materials) ? room.materials.length : 0,
+    currentMaterialId: room.currentMaterialId || null,
     lastActivity: getLastActivity(room)
   };
 }
@@ -299,6 +426,7 @@ app.get("/api/admin/storage", requireAdmin, (req, res) => {
   res.json({
     dataDir: DATA_DIR,
     dataFile: DATA_FILE,
+    materialsDir: MATERIALS_DIR,
     dataFileExists: fs.existsSync(DATA_FILE),
     roomCount: Object.keys(rooms).length
   });
@@ -330,7 +458,9 @@ app.get("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
   res.json({
     summary: getRoomSummary(roomId, rooms[roomId]),
     users: getRoomUsers(roomId),
-    strokes: rooms[roomId].strokes
+    strokes: rooms[roomId].strokes,
+    materials: rooms[roomId].materials,
+    currentMaterial: getCurrentMaterial(roomId)
   });
 });
 
@@ -422,6 +552,130 @@ app.post("/api/admin/save", requireAdmin, (req, res) => {
   });
 });
 
+/* MATERIAL API */
+
+app.post("/api/materials/upload", (req, res) => {
+  try {
+    const roomId = String(req.body.roomId || "default").trim();
+    const username = String(req.body.username || "User").trim();
+    const role = req.body.role === "teacher" ? "teacher" : "student";
+
+    createRoomIfNotExists(roomId);
+
+    const filename = String(req.body.filename || "material");
+    const dataUrl = String(req.body.dataUrl || "");
+
+    if (!dataUrl || dataUrl.length > MAX_MATERIAL_DATA_URL_LENGTH) {
+      return res.status(400).json({
+        error: "File terlalu besar atau tidak valid."
+      });
+    }
+
+    const { mimeType, buffer } = dataUrlToBuffer(dataUrl);
+
+    if (!isAllowedMaterialType(mimeType, filename)) {
+      return res.status(400).json({
+        error: "Hanya file PDF, PPT, atau PPTX yang diperbolehkan."
+      });
+    }
+
+    const ext = getExtensionFromMime(mimeType, filename);
+    const id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    const cleanBaseName = sanitizeFilePart(path.basename(filename, path.extname(filename))) || "material";
+    const storedName = `${id}-${cleanBaseName}${ext}`;
+
+    const dir = ensureMaterialRoomDir(roomId);
+    const filePath = path.join(dir, storedName);
+
+    fs.writeFileSync(filePath, buffer);
+
+    const material = {
+      id,
+      roomId,
+      filename,
+      storedName,
+      mimeType,
+      sizeBytes: buffer.length,
+      url: getMaterialUrl(roomId, storedName),
+      uploadedBy: username,
+      uploadedRole: role,
+      uploadedAt: Date.now()
+    };
+
+    rooms[roomId].materials.push(material);
+    rooms[roomId].currentMaterialId = material.id;
+
+    scheduleSave();
+
+    io.to(roomId).emit("material-list", {
+      materials: rooms[roomId].materials,
+      currentMaterialId: rooms[roomId].currentMaterialId,
+      currentMaterial: material
+    });
+
+    io.to(roomId).emit("material-set", {
+      material,
+      materials: rooms[roomId].materials
+    });
+
+    res.json({
+      ok: true,
+      material,
+      materials: rooms[roomId].materials
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message || "Gagal upload materi."
+    });
+  }
+});
+
+app.post("/api/materials/set-current", (req, res) => {
+  const roomId = String(req.body.roomId || "default").trim();
+  const materialId = String(req.body.materialId || "");
+
+  createRoomIfNotExists(roomId);
+
+  const material = rooms[roomId].materials.find((m) => m.id === materialId);
+
+  if (!material) {
+    return res.status(404).json({
+      error: "Materi tidak ditemukan."
+    });
+  }
+
+  rooms[roomId].currentMaterialId = material.id;
+
+  scheduleSave();
+
+  io.to(roomId).emit("material-set", {
+    material,
+    materials: rooms[roomId].materials
+  });
+
+  res.json({
+    ok: true,
+    material,
+    materials: rooms[roomId].materials
+  });
+});
+
+app.post("/api/materials/clear-current", (req, res) => {
+  const roomId = String(req.body.roomId || "default").trim();
+
+  createRoomIfNotExists(roomId);
+
+  rooms[roomId].currentMaterialId = null;
+
+  scheduleSave();
+
+  io.to(roomId).emit("material-clear");
+
+  res.json({
+    ok: true
+  });
+});
+
 /* SOCKET.IO */
 
 loadRoomsFromDisk();
@@ -451,7 +705,10 @@ io.on("connection", (socket) => {
     socket.emit("board-state", {
       strokes: rooms[roomId].strokes,
       splitMode: rooms[roomId].splitMode,
-      locked: rooms[roomId].locked
+      locked: rooms[roomId].locked,
+      materials: rooms[roomId].materials,
+      currentMaterialId: rooms[roomId].currentMaterialId,
+      currentMaterial: getCurrentMaterial(roomId)
     });
 
     io.to(roomId).emit("room-users", getRoomUsers(roomId));

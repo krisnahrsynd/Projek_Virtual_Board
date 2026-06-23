@@ -28,6 +28,18 @@
 
   <div class="board-shell">
     <main class="board-area">
+      <div id="materialLayer" class="material-layer hidden">
+        <div id="materialStage" class="material-stage">
+          <iframe id="materialFrame" title="Material Viewer"></iframe>
+
+          <div id="materialFallback" class="material-fallback hidden">
+            <h3>Preview materi tidak tersedia di browser ini</h3>
+            <p id="materialFallbackText">Buka materi pada tab baru.</p>
+            <a id="materialOpenLink" href="#" target="_blank" rel="noreferrer">Open Material</a>
+          </div>
+        </div>
+      </div>
+
       <canvas id="board"></canvas>
 
       <button id="toolbarToggleBtn" class="toolbar-toggle-btn" type="button">
@@ -43,6 +55,9 @@
           <button id="textTool" class="tool-btn" type="button">Text</button>
           <button id="imageTool" class="tool-btn" type="button">Image</button>
           <input id="imageInput" type="file" accept="image/*" hidden />
+
+          <button id="materialTool" class="tool-btn" type="button">Material</button>
+          <input id="materialInput" type="file" accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" hidden />
 
           <div class="shape-tool-group">
             <button id="shapeMenuBtn" class="tool-btn" type="button">Shape</button>
@@ -76,6 +91,12 @@
         <button id="fitViewBtn" type="button">Fit</button>
       </div>
 
+      <div id="materialBadge" class="material-badge hidden">
+        <span id="materialName">No material</span>
+        <button id="materialOpenBtn" type="button">Open</button>
+        <button id="materialHideBtn" type="button">Hide</button>
+      </div>
+
       <div id="statusText" class="status-toast">Ready</div>
     </main>
 
@@ -91,6 +112,17 @@
 
       <ul id="userList"></ul>
 
+      <div class="material-panel">
+        <div class="material-panel-header">
+          <strong>Materi Pembelajaran</strong>
+          <button id="materialUploadBtn" type="button">Upload</button>
+        </div>
+
+        <div id="materialList" class="material-list">
+          <p class="empty-material">Belum ada materi.</p>
+        </div>
+      </div>
+
       <div class="hint-box">
         <strong>Shortcut</strong>
         <p>H = Pan</p>
@@ -99,6 +131,7 @@
         <p>E = Eraser</p>
         <p>T = Text</p>
         <p>I = Image</p>
+        <p>M = Material</p>
         <p>L = Line</p>
         <p>R = Rect</p>
         <p>C = Circle</p>
