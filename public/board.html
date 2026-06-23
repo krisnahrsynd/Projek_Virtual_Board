@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Board</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="board-page">
+  <div class="topbar">
+    <div>
+      <strong>Room:</strong> <span id="roomLabel"></span>
+      |
+      <strong>User:</strong> <span id="userLabel"></span>
+      |
+      <strong>Role:</strong> <span id="roleLabel"></span>
+    </div>
+
+    <div>
+      <button id="splitBtn">Split Board</button>
+      <button id="clearBtn">Clear Board</button>
+      <button id="backBtn">Keluar</button>
+    </div>
+  </div>
+
+  <div class="main-layout">
+    <aside class="sidebar">
+      <h3>User Aktif</h3>
+      <ul id="userList"></ul>
+    </aside>
+
+    <main class="board-area">
+      <canvas id="board"></canvas>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="board.js"></script>
+</body>
+</html>

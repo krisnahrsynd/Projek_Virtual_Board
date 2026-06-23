@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Virtual Board</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="dashboard-page">
+  <div class="dashboard-container">
+    <h1>Virtual Board Pembelajaran Kolaboratif</h1>
+    <p>Masuk ke sesi kelas untuk mulai berkolaborasi.</p>
+
+    <form id="joinForm">
+      <input type="text" id="username" placeholder="Nama pengguna" required />
+
+      <input type="text" id="roomId" placeholder="Kode kelas / room" required />
+
+      <select id="role" required>
+        <option value="">Pilih role</option>
+        <option value="teacher">Guru / Pendidik</option>
+        <option value="student">Siswa / Peserta Didik</option>
+      </select>
+
+      <button type="submit">Masuk Board</button>
+    </form>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
