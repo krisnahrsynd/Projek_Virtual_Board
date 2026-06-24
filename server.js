@@ -20,14 +20,18 @@ const DATA_DIR =
   path.join(__dirname, "data");
 
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
+const IOT_FILE = path.join(DATA_DIR, "iot-devices.json");
 const MATERIALS_DIR = path.join(DATA_DIR, "materials");
 
 const SAVE_DELAY = 300;
 const MAX_STROKES_PER_ROOM = 10000;
 const MAX_IMAGE_DATA_URL_LENGTH = 6_500_000;
 const MAX_MATERIAL_DATA_URL_LENGTH = 24_000_000;
+const IOT_OFFLINE_AFTER_MS = 15000;
 
 const rooms = {};
+const iotDevices = {};
+
 let saveTimer = null;
 
 function ensureDataDir() {
@@ -83,6 +87,18 @@ function toPersistableRooms() {
   return persisted;
 }
 
+function toPersistableIotDevices() {
+  const persisted = {};
+
+  Object.entries(iotDevices).forEach(([deviceId, device]) => {
+    persisted[deviceId] = {
+      ...device
+    };
+  });
+
+  return persisted;
+}
+
 function saveRoomsToDisk() {
   try {
     ensureDataDir();
@@ -99,11 +115,28 @@ function saveRoomsToDisk() {
   }
 }
 
+function saveIotToDisk() {
+  try {
+    ensureDataDir();
+
+    const tempFile = `${IOT_FILE}.tmp`;
+    const payload = JSON.stringify(toPersistableIotDevices(), null, 2);
+
+    fs.writeFileSync(tempFile, payload, "utf8");
+    fs.renameSync(tempFile, IOT_FILE);
+
+    console.log("IoT tersimpan ke", IOT_FILE);
+  } catch (error) {
+    console.error("Gagal menyimpan IoT:", error.message);
+  }
+}
+
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
 
   saveTimer = setTimeout(() => {
     saveRoomsToDisk();
+    saveIotToDisk();
     saveTimer = null;
   }, SAVE_DELAY);
 }
@@ -133,6 +166,28 @@ function loadRoomsFromDisk() {
     console.log("Board berhasil dimuat dari", DATA_FILE);
   } catch (error) {
     console.error("Gagal memuat board:", error.message);
+  }
+}
+
+function loadIotFromDisk() {
+  try {
+    ensureDataDir();
+
+    if (!fs.existsSync(IOT_FILE)) return;
+
+    const raw = fs.readFileSync(IOT_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+
+    Object.entries(parsed).forEach(([deviceId, device]) => {
+      iotDevices[deviceId] = {
+        ...device,
+        online: false
+      };
+    });
+
+    console.log("IoT berhasil dimuat dari", IOT_FILE);
+  } catch (error) {
+    console.error("Gagal memuat IoT:", error.message);
   }
 }
 
@@ -303,6 +358,7 @@ function getExtensionFromMime(mimeType, filename = "") {
 
   if (mimeType === "application/pdf") return ".pdf";
   if (mimeType === "application/vnd.ms-powerpoint") return ".ppt";
+
   if (
     mimeType ===
     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -423,6 +479,7 @@ function getRoomSummary(roomId, room) {
     materialCount: Array.isArray(room.materials) ? room.materials.length : 0,
     currentMaterialId: room.currentMaterialId || null,
     currentMaterialPage: Number(room.currentMaterialPage) || 1,
+    iotDevices: Object.values(iotDevices).filter((d) => d.roomId === roomId).length,
     lastActivity: getLastActivity(room)
   };
 }
@@ -435,9 +492,12 @@ app.get("/api/admin/storage", requireAdmin, (req, res) => {
   res.json({
     dataDir: DATA_DIR,
     dataFile: DATA_FILE,
+    iotFile: IOT_FILE,
     materialsDir: MATERIALS_DIR,
     dataFileExists: fs.existsSync(DATA_FILE),
-    roomCount: Object.keys(rooms).length
+    iotFileExists: fs.existsSync(IOT_FILE),
+    roomCount: Object.keys(rooms).length,
+    iotDeviceCount: Object.keys(iotDevices).length
   });
 });
 
@@ -551,10 +611,11 @@ app.delete("/api/admin/rooms/:roomId", requireAdmin, (req, res) => {
 
 app.post("/api/admin/save", requireAdmin, (req, res) => {
   saveRoomsToDisk();
+  saveIotToDisk();
 
   res.json({
     ok: true,
-    message: "Data board berhasil disimpan manual."
+    message: "Data board dan IoT berhasil disimpan manual."
   });
 });
 
@@ -720,9 +781,266 @@ app.post("/api/materials/clear-current", (req, res) => {
   res.json({ ok: true });
 });
 
+/* IOT HELPERS */
+
+function checkIotToken(req) {
+  const expected = process.env.IOT_DEVICE_TOKEN || "";
+  const given = req.headers["x-device-token"] || req.body.token || "";
+
+  if (!expected) return true;
+
+  return given === expected;
+}
+
+function isDeviceOnline(device) {
+  if (!device || !device.lastSeen) return false;
+
+  return Date.now() - Number(device.lastSeen) <= IOT_OFFLINE_AFTER_MS;
+}
+
+function getIotDeviceSummary(device) {
+  const online = isDeviceOnline(device);
+
+  return {
+    ...device,
+    online,
+    ageMs: device.lastSeen ? Date.now() - Number(device.lastSeen) : null
+  };
+}
+
+function getAllIotSummaries() {
+  return Object.values(iotDevices)
+    .map(getIotDeviceSummary)
+    .sort((a, b) => {
+      const aa = Number(a.lastSeen) || 0;
+      const bb = Number(b.lastSeen) || 0;
+      return bb - aa;
+    });
+}
+
+function broadcastIotUpdate(device) {
+  const summary = getIotDeviceSummary(device);
+
+  io.emit("iot-devices-update", {
+    devices: getAllIotSummaries()
+  });
+
+  if (summary.roomId) {
+    io.to(summary.roomId).emit("iot-status", summary);
+  }
+}
+
+/* IOT DEVICE API */
+
+app.post("/api/iot/heartbeat", (req, res) => {
+  if (!checkIotToken(req)) {
+    return res.status(401).json({
+      error: "Token IoT salah."
+    });
+  }
+
+  const deviceId = String(req.body.deviceId || "").trim();
+
+  if (!deviceId) {
+    return res.status(400).json({
+      error: "deviceId wajib diisi."
+    });
+  }
+
+  const roomId = String(req.body.roomId || "default").trim();
+  const name = String(req.body.name || deviceId).trim();
+
+  createRoomIfNotExists(roomId);
+
+  const existing = iotDevices[deviceId] || {};
+
+  const device = {
+    ...existing,
+    deviceId,
+    roomId,
+    name,
+    firmware: String(req.body.firmware || existing.firmware || ""),
+    ip: String(req.body.ip || existing.ip || ""),
+    mac: String(req.body.mac || existing.mac || ""),
+    rssi: Number(req.body.rssi || 0),
+    uptimeMs: Number(req.body.uptimeMs || 0),
+    freeHeap: Number(req.body.freeHeap || 0),
+    state: typeof req.body.state === "object" && req.body.state ? req.body.state : existing.state || {},
+    lastSeen: Date.now(),
+    firstSeen: existing.firstSeen || Date.now(),
+    lastAck: existing.lastAck || null,
+    lastCommandResult: existing.lastCommandResult || null,
+    pendingCommand: existing.pendingCommand || null
+  };
+
+  const command = device.pendingCommand || null;
+
+  if (command) {
+    device.lastCommandDeliveredAt = Date.now();
+    device.pendingCommand = null;
+  }
+
+  iotDevices[deviceId] = device;
+
+  scheduleSave();
+  broadcastIotUpdate(device);
+
+  res.json({
+    ok: true,
+    serverTime: Date.now(),
+    device: getIotDeviceSummary(device),
+    command
+  });
+});
+
+app.post("/api/iot/ack", (req, res) => {
+  if (!checkIotToken(req)) {
+    return res.status(401).json({
+      error: "Token IoT salah."
+    });
+  }
+
+  const deviceId = String(req.body.deviceId || "").trim();
+
+  if (!deviceId || !iotDevices[deviceId]) {
+    return res.status(404).json({
+      error: "Device tidak ditemukan."
+    });
+  }
+
+  const device = iotDevices[deviceId];
+
+  device.lastAck = {
+    commandId: String(req.body.commandId || ""),
+    command: String(req.body.command || ""),
+    ok: Boolean(req.body.ok),
+    message: String(req.body.message || ""),
+    at: Date.now()
+  };
+
+  device.lastCommandResult = device.lastAck;
+
+  if (typeof req.body.state === "object" && req.body.state) {
+    device.state = req.body.state;
+  }
+
+  device.lastSeen = Date.now();
+
+  scheduleSave();
+  broadcastIotUpdate(device);
+
+  res.json({
+    ok: true,
+    device: getIotDeviceSummary(device)
+  });
+});
+
+/* IOT ADMIN API */
+
+app.get("/api/admin/iot/devices", requireAdmin, (req, res) => {
+  res.json({
+    devices: getAllIotSummaries()
+  });
+});
+
+app.post("/api/admin/iot/:deviceId/control", requireAdmin, (req, res) => {
+  const deviceId = String(req.params.deviceId || "").trim();
+
+  const device = iotDevices[deviceId];
+
+  if (!device) {
+    return res.status(404).json({
+      error: "Device tidak ditemukan."
+    });
+  }
+
+  const command = String(req.body.command || "").trim();
+  const payload =
+    typeof req.body.payload === "object" && req.body.payload
+      ? req.body.payload
+      : {};
+
+  if (!command) {
+    return res.status(400).json({
+      error: "Command wajib diisi."
+    });
+  }
+
+  const pendingCommand = {
+    id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+    command,
+    payload,
+    createdAt: Date.now()
+  };
+
+  device.pendingCommand = pendingCommand;
+  device.lastCommandQueuedAt = Date.now();
+
+  scheduleSave();
+  broadcastIotUpdate(device);
+
+  res.json({
+    ok: true,
+    device: getIotDeviceSummary(device),
+    pendingCommand
+  });
+});
+
+app.post("/api/admin/iot/:deviceId/bind", requireAdmin, (req, res) => {
+  const deviceId = String(req.params.deviceId || "").trim();
+
+  const device = iotDevices[deviceId];
+
+  if (!device) {
+    return res.status(404).json({
+      error: "Device tidak ditemukan."
+    });
+  }
+
+  const roomId = String(req.body.roomId || device.roomId || "default").trim();
+  const name = String(req.body.name || device.name || deviceId).trim();
+
+  createRoomIfNotExists(roomId);
+
+  device.roomId = roomId;
+  device.name = name;
+  device.updatedAt = Date.now();
+
+  scheduleSave();
+  broadcastIotUpdate(device);
+
+  res.json({
+    ok: true,
+    device: getIotDeviceSummary(device)
+  });
+});
+
+app.delete("/api/admin/iot/:deviceId", requireAdmin, (req, res) => {
+  const deviceId = String(req.params.deviceId || "").trim();
+
+  if (!iotDevices[deviceId]) {
+    return res.status(404).json({
+      error: "Device tidak ditemukan."
+    });
+  }
+
+  delete iotDevices[deviceId];
+
+  scheduleSave();
+
+  io.emit("iot-devices-update", {
+    devices: getAllIotSummaries()
+  });
+
+  res.json({
+    ok: true
+  });
+});
+
 /* SOCKET.IO */
 
 loadRoomsFromDisk();
+loadIotFromDisk();
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
@@ -754,6 +1072,10 @@ io.on("connection", (socket) => {
       currentMaterialId: rooms[roomId].currentMaterialId,
       currentMaterialPage: Number(rooms[roomId].currentMaterialPage) || 1,
       currentMaterial: getCurrentMaterial(roomId)
+    });
+
+    socket.emit("iot-devices-update", {
+      devices: getAllIotSummaries()
     });
 
     io.to(roomId).emit("room-users", getRoomUsers(roomId));
@@ -823,7 +1145,6 @@ io.on("connection", (socket) => {
     if (room.locked && !isTeacher(socket)) return;
 
     const strokeId = String(data.strokeId);
-
     const index = room.strokes.findIndex((stroke) => stroke.id === strokeId);
 
     if (index === -1) return;
@@ -850,7 +1171,6 @@ io.on("connection", (socket) => {
     if (room.locked && !isTeacher(socket)) return;
 
     const strokeId = String(rawStroke.id || "");
-
     const index = room.strokes.findIndex((stroke) => stroke.id === strokeId);
 
     if (index === -1) return;
@@ -1054,9 +1374,17 @@ io.on("connection", (socket) => {
   });
 });
 
+setInterval(() => {
+  io.emit("iot-devices-update", {
+    devices: getAllIotSummaries()
+  });
+}, 5000);
+
 function shutdown() {
   console.log("Menyimpan board sebelum server berhenti...");
+
   saveRoomsToDisk();
+  saveIotToDisk();
 
   server.close(() => {
     process.exit(0);

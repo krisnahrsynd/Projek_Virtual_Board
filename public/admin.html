@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin Room Management</title>
+  <title>Admin Room & IoT Management</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="admin-page">
   <div class="admin-shell">
     <header class="admin-header">
       <div>
-        <h1>Room Management</h1>
-        <p>Kelola room, lock board, split board, clear board, dan hapus room.</p>
+        <h1>Room & IoT Management</h1>
+        <p>Kelola room, user, board, material, dan perangkat Smart Classroom ESP32-S3.</p>
       </div>
 
       <div class="admin-header-actions">
@@ -23,7 +23,7 @@
 
     <section id="loginCard" class="admin-card admin-login">
       <h2>Admin Login</h2>
-      <p>Masukkan PIN admin dari environment variable Railway.</p>
+      <p>Masukkan PIN admin dari Railway Variables.</p>
 
       <form id="loginForm">
         <input id="adminPin" type="password" placeholder="ADMIN_PIN" required />
@@ -49,14 +49,38 @@
         </div>
 
         <div class="stat-card">
-          <span>Storage</span>
-          <strong id="storageStatus">-</strong>
+          <span>IoT Online</span>
+          <strong id="iotOnline">0</strong>
         </div>
       </div>
 
       <div id="noticeBox" class="notice-box"></div>
 
-      <div id="roomList" class="room-grid"></div>
+      <section class="admin-card admin-section-card">
+        <div class="section-title-row">
+          <div>
+            <h2>Smart Classroom ESP32-S3 Monitoring</h2>
+            <p>Monitoring sensor kelas dan kontrol lampu/AC berbasis ESP32-S3.</p>
+          </div>
+
+          <button id="iotRefreshBtn" type="button">Refresh IoT</button>
+        </div>
+
+        <div id="iotDeviceList" class="iot-device-grid">
+          <div class="empty-room">Belum ada device ESP32-S3 yang terhubung.</div>
+        </div>
+      </section>
+
+      <section class="admin-card admin-section-card">
+        <div class="section-title-row">
+          <div>
+            <h2>Room List</h2>
+            <p>Monitoring room pembelajaran dan aktivitas virtual board.</p>
+          </div>
+        </div>
+
+        <div id="roomList" class="room-grid"></div>
+      </section>
     </section>
   </div>
 
