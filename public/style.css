@@ -2228,3 +2228,255 @@ input[type="range"] {
     padding: 9px 14px;
   }
 }
+
+/* ========================================= */
+/* SIDE TOOLBAR LAYOUT - DESKTOP FIRST       */
+/* tempel paling bawah style.css             */
+/* ========================================= */
+
+/* Desktop / layar lebar: toolbar pindah ke samping kiri */
+@media (min-width: 1180px) {
+  .board-area {
+    position: relative;
+  }
+
+  .toolbar,
+  .tool-panel,
+  .floating-toolbar,
+  .tools-panel,
+  #toolbar,
+  #toolsPanel,
+  #toolDock {
+    position: absolute !important;
+    top: 18px !important;
+    left: 18px !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: none !important;
+
+    width: 230px !important;
+    max-width: 230px !important;
+    max-height: calc(100% - 36px) !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    align-content: stretch !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+
+    padding: 14px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+
+    border-radius: 22px !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12) !important;
+    z-index: 30 !important;
+  }
+
+  /* semua grup di dalam toolbar dibikin menyesuaikan */
+  .toolbar > div,
+  .tool-panel > div,
+  .floating-toolbar > div,
+  .tools-panel > div,
+  #toolbar > div,
+  #toolsPanel > div,
+  #toolDock > div {
+    width: 100% !important;
+  }
+
+  /* baris tombol tool */
+  .toolbar .tool-row,
+  .toolbar .toolbar-row,
+  .tool-panel .tool-row,
+  .tool-panel .toolbar-row,
+  .floating-toolbar .tool-row,
+  .floating-toolbar .toolbar-row,
+  .tools-panel .tool-row,
+  .tools-panel .toolbar-row,
+  #toolbar .tool-row,
+  #toolbar .toolbar-row,
+  #toolsPanel .tool-row,
+  #toolsPanel .toolbar-row,
+  #toolDock .tool-row,
+  #toolDock .toolbar-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  /* fallback kalau elemen row tidak ada */
+  .toolbar,
+  .tool-panel,
+  .floating-toolbar,
+  .tools-panel,
+  #toolbar,
+  #toolsPanel,
+  #toolDock {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* tombol di toolbar */
+  .toolbar button,
+  .tool-panel button,
+  .floating-toolbar button,
+  .tools-panel button,
+  #toolbar button,
+  #toolsPanel button,
+  #toolDock button {
+    width: 100% !important;
+    min-height: 42px !important;
+    padding: 10px 12px !important;
+    border-radius: 12px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+  }
+
+  /* jika tombol tool memang berada langsung di root toolbar */
+  .toolbar > button,
+  .tool-panel > button,
+  .floating-toolbar > button,
+  .tools-panel > button,
+  #toolbar > button,
+  #toolsPanel > button,
+  #toolDock > button {
+    width: 100% !important;
+  }
+
+  /* divider jadi horizontal */
+  .toolbar hr,
+  .tool-panel hr,
+  .floating-toolbar hr,
+  .tools-panel hr,
+  #toolbar hr,
+  #toolsPanel hr,
+  #toolDock hr,
+  .tool-divider,
+  .tools-divider {
+    width: 100% !important;
+    height: 1px !important;
+    min-height: 1px !important;
+    margin: 2px 0 !important;
+    border: none !important;
+    background: #e2e8f0 !important;
+  }
+
+  /* area warna + ukuran */
+  .toolbar label,
+  .tool-panel label,
+  .floating-toolbar label,
+  .tools-panel label,
+  #toolbar label,
+  #toolsPanel label,
+  #toolDock label {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #475569 !important;
+  }
+
+  .toolbar input[type="color"],
+  .tool-panel input[type="color"],
+  .floating-toolbar input[type="color"],
+  .tools-panel input[type="color"],
+  #toolbar input[type="color"],
+  #toolsPanel input[type="color"],
+  #toolDock input[type="color"] {
+    width: 46px !important;
+    height: 40px !important;
+    padding: 3px !important;
+    border-radius: 10px !important;
+  }
+
+  .toolbar input[type="range"],
+  .tool-panel input[type="range"],
+  .floating-toolbar input[type="range"],
+  .tools-panel input[type="range"],
+  #toolbar input[type="range"],
+  #toolsPanel input[type="range"],
+  #toolDock input[type="range"] {
+    width: 100% !important;
+  }
+
+  /* kalau ada wrapper untuk warna / size */
+  .toolbar .tool-control,
+  .toolbar .tool-setting,
+  .toolbar .toolbar-setting,
+  .tool-panel .tool-control,
+  .tool-panel .tool-setting,
+  .floating-toolbar .tool-control,
+  .floating-toolbar .tool-setting,
+  .tools-panel .tool-control,
+  .tools-panel .tool-setting,
+  #toolbar .tool-control,
+  #toolbar .tool-setting,
+  #toolsPanel .tool-control,
+  #toolsPanel .tool-setting,
+  #toolDock .tool-control,
+  #toolDock .tool-setting {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  /* mode badge tetap bawah tengah */
+  .mode-badge,
+  #modeBadge,
+  #modePill,
+  .mode-pill {
+    bottom: 18px !important;
+  }
+
+  /* zoom tetap kanan bawah */
+  .zoom-controls,
+  #zoomControls,
+  .zoom-panel,
+  #zoomPanel {
+    right: 18px !important;
+    bottom: 18px !important;
+  }
+}
+
+/* Tablet / layar sedang: toolbar tetap horizontal tapi lebih rapih */
+@media (min-width: 761px) and (max-width: 1179px) {
+  .toolbar,
+  .tool-panel,
+  .floating-toolbar,
+  .tools-panel,
+  #toolbar,
+  #toolsPanel,
+  #toolDock {
+    top: 16px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    width: min(92%, 920px) !important;
+    max-width: min(92%, 920px) !important;
+    padding: 14px !important;
+    gap: 10px !important;
+  }
+}
+
+/* Mobile tetap nyaman */
+@media (max-width: 760px) {
+  .toolbar,
+  .tool-panel,
+  .floating-toolbar,
+  .tools-panel,
+  #toolbar,
+  #toolsPanel,
+  #toolDock {
+    top: 10px !important;
+    left: 10px !important;
+    right: 10px !important;
+    transform: none !important;
+    width: auto !important;
+    max-width: none !important;
+    border-radius: 18px !important;
+  }
+}
