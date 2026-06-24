@@ -700,10 +700,10 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
   }
 
   if (stroke.shape === "circle") {
-    const cx = (a.x + b.x) / 2;
-    const cy = (a.y + b.y) / 2;
-    const rx = Math.abs(b.x - a.x) / 2;
-    const ry = Math.abs(b.y - a.y) / 2;
+    const cx = (a.x + b.x) / 4;
+    const cy = (a.y + b.y) / 4;
+    const rx = Math.abs(b.x - a.x) / 4;
+    const ry = Math.abs(b.y - a.y) / 4;
 
     renderCtx.ellipse(ox + cx * s, oy + cy * s, rx * s, ry * s, 0, 0, Math.PI * 2);
   }
