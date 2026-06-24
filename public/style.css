@@ -1134,3 +1134,549 @@ canvas.select-cursor:active {
     width: 100%;
   }
 }
+
+/* ============================= */
+/* ADMIN DASHBOARD FINAL POLISH */
+/* ============================= */
+
+.admin-page {
+  min-height: 100dvh;
+  background: linear-gradient(135deg, #eef2f7 0%, #f8fafc 100%);
+  color: #111827;
+  font-family: Arial, sans-serif;
+}
+
+.admin-shell {
+  width: min(1280px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 42px;
+}
+
+.admin-header {
+  background: linear-gradient(135deg, #0f172a 0%, #111827 100%);
+  color: #ffffff;
+  border-radius: 22px;
+  padding: 24px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.22);
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.admin-header p {
+  margin: 8px 0 0;
+  color: #d1d5db;
+  font-size: 15px;
+}
+
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-header-actions button {
+  background: #2563eb;
+  color: white;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-weight: 700;
+}
+
+.admin-header-actions button:hover {
+  background: #1d4ed8;
+}
+
+.admin-card,
+.admin-dashboard {
+  background: #ffffff;
+  border-radius: 22px;
+  padding: 24px;
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+}
+
+.admin-login {
+  width: min(460px, 100%);
+  margin: 0 auto;
+}
+
+.admin-login h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.admin-login p {
+  margin: 0 0 16px;
+  color: #6b7280;
+}
+
+.admin-login form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-login input {
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 13px 14px;
+}
+
+.admin-login button {
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.stat-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.stat-card span {
+  display: block;
+  color: #6b7280;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.stat-card strong {
+  display: block;
+  color: #111827;
+  font-size: 32px;
+  line-height: 1;
+}
+
+.notice-box {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  padding: 13px 16px;
+  margin-bottom: 18px;
+  font-size: 14px;
+}
+
+.notice-box.success {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.notice-box.error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.admin-section-card {
+  margin-bottom: 20px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.section-title-row h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #111827;
+}
+
+.section-title-row p {
+  margin: 7px 0 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.section-title-row button {
+  background: #111827;
+  color: white;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-weight: 700;
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.room-card {
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+
+.room-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.room-card h3 {
+  margin: 0;
+  font-size: 22px;
+  color: #111827;
+}
+
+.room-card p {
+  margin: 7px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.room-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: flex-start;
+  justify-content: flex-end;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 27px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.badge.blue {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badge.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.room-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 15px;
+}
+
+.room-metrics div {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 11px;
+}
+
+.room-metrics span {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.room-metrics strong {
+  display: block;
+  font-size: 20px;
+  color: #111827;
+}
+
+.room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.room-actions button {
+  background: #111827;
+  color: white;
+  border-radius: 10px;
+  padding: 10px 13px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.room-actions button:hover {
+  background: #374151;
+}
+
+.room-actions button.warning {
+  background: #f59e0b;
+}
+
+.room-actions button.danger {
+  background: #dc2626;
+}
+
+.empty-room {
+  grid-column: 1 / -1;
+  padding: 28px;
+  text-align: center;
+  color: #6b7280;
+  background: #f8fafc;
+  border-radius: 18px;
+  border: 1px dashed #cbd5e1;
+}
+
+/* IOT CARD */
+
+.iot-device-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+.iot-card {
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+}
+
+.iot-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.iot-card-header h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.iot-card-header p {
+  margin: 5px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.iot-sensor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.iot-sensor-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 15px;
+  padding: 13px;
+}
+
+.iot-sensor-card span {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.iot-sensor-card strong {
+  font-size: 21px;
+  color: #111827;
+}
+
+.iot-status-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 15px;
+  padding: 13px;
+  border-radius: 18px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.iot-status-panel span {
+  display: block;
+  color: #1d4ed8;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.iot-status-panel strong {
+  display: block;
+  color: #111827;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.iot-command-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.iot-command-group {
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  border-radius: 15px;
+  padding: 13px;
+}
+
+.iot-command-group > strong {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 14px;
+  color: #111827;
+}
+
+.iot-command-group div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.iot-command-group button,
+.iot-bind-panel button {
+  padding: 9px 12px;
+  font-size: 12px;
+  border-radius: 10px;
+  background: #111827;
+  color: white;
+  font-weight: 700;
+}
+
+.iot-command-group button.warning,
+.iot-bind-panel button.warning {
+  background: #f59e0b;
+}
+
+.iot-command-group button.danger,
+.iot-bind-panel button.danger {
+  background: #dc2626;
+}
+
+.iot-temp-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.iot-temp-control input {
+  width: 110px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.iot-bind-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 13px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.iot-bind-panel input {
+  flex: 1;
+  min-width: 150px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 10px 11px;
+  font-size: 13px;
+}
+
+.iot-last-ack {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border-radius: 13px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #047857;
+  font-size: 13px;
+}
+
+@media (max-width: 1000px) {
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .room-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .room-metrics,
+  .iot-sensor-grid,
+  .iot-status-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .iot-card-header {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-shell {
+    width: min(100% - 20px, 1280px);
+    padding: 14px 0 30px;
+  }
+
+  .admin-dashboard,
+  .admin-card {
+    padding: 18px;
+    border-radius: 18px;
+  }
+
+  .section-title-row {
+    flex-direction: column;
+  }
+
+  .admin-stats,
+  .room-metrics,
+  .iot-sensor-grid,
+  .iot-status-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .iot-bind-panel {
+    flex-direction: column;
+  }
+
+  .iot-bind-panel input,
+  .iot-temp-control input {
+    width: 100%;
+  }
+}
