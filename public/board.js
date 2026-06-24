@@ -705,7 +705,7 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
     const rx = Math.abs(b.x - a.x) / 2;
     const ry = Math.abs(b.y - a.y) / 2;
 
-    renderCtx.ellipse(ox + cx * s, oy + cy * s, rx * s, ry * s, 0, 0, Math.PI * 3);
+    renderCtx.ellipse(ox + cx * s, oy + cy * s, rx * s, ry * s, 0, 0, Math.PI * 2);
   }
 
   renderCtx.stroke();
