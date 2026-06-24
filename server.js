@@ -3,6 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const fs = require("fs");
 const path = require("path");
+const { execFile } = require("child_process");
 
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +23,7 @@ const DATA_DIR =
 const DATA_FILE = path.join(DATA_DIR, "rooms.json");
 const IOT_FILE = path.join(DATA_DIR, "iot-devices.json");
 const MATERIALS_DIR = path.join(DATA_DIR, "materials");
+const LIBREOFFICE_PROFILE_DIR = path.join(DATA_DIR, "libreoffice-profiles");
 
 const SAVE_DELAY = 300;
 const MAX_STROKES_PER_ROOM = 10000;
@@ -42,6 +44,10 @@ function ensureDataDir() {
   if (!fs.existsSync(MATERIALS_DIR)) {
     fs.mkdirSync(MATERIALS_DIR, { recursive: true });
   }
+
+  if (!fs.existsSync(LIBREOFFICE_PROFILE_DIR)) {
+    fs.mkdirSync(LIBREOFFICE_PROFILE_DIR, { recursive: true });
+  }
 }
 
 function sanitizeFilePart(value) {
@@ -53,6 +59,10 @@ function sanitizeFilePart(value) {
 
 function safeRoomId(roomId) {
   return sanitizeFilePart(roomId || "default") || "default";
+}
+
+function createId() {
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
 }
 
 function materialRoomDir(roomId) {
@@ -275,7 +285,7 @@ function normalizeStroke(socket, rawStroke = {}) {
   const pageNumber = Math.max(1, Number(rawStroke.pageNumber) || 1);
 
   return {
-    id: String(rawStroke.id || Date.now() + "-" + Math.random()),
+    id: String(rawStroke.id || createId()),
     roomId,
     ownerId: socket.id,
     username: socket.username,
@@ -369,6 +379,10 @@ function getExtensionFromMime(mimeType, filename = "") {
   return "";
 }
 
+function isOfficePresentation(ext) {
+  return ext === ".ppt" || ext === ".pptx";
+}
+
 function isAllowedMaterialType(mimeType, filename) {
   const ext = getExtensionFromMime(mimeType, filename);
 
@@ -385,6 +399,126 @@ function getCurrentMaterial(roomId) {
   if (!room || !room.currentMaterialId) return null;
 
   return room.materials.find((m) => m.id === room.currentMaterialId) || null;
+}
+
+function execFilePromise(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, options, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function fileUriFromPath(filePath) {
+  const normalized = path.resolve(filePath).replace(/\\/g, "/");
+
+  if (process.platform === "win32") {
+    return `file:///${normalized}`;
+  }
+
+  return `file://${normalized}`;
+}
+
+function getLibreOfficeCandidates() {
+  const configured =
+    process.env.LIBREOFFICE_BIN ||
+    process.env.SOFFICE_BIN ||
+    process.env.LIBREOFFICE_PATH;
+
+  if (configured) return [configured];
+
+  if (process.platform === "win32") {
+    return [
+      "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+      "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+      "soffice",
+      "libreoffice"
+    ];
+  }
+
+  return ["libreoffice", "soffice"];
+}
+
+async function convertPresentationToPdf(inputPath, outputDir) {
+  ensureDataDir();
+
+  const sourceBaseName = path.basename(inputPath, path.extname(inputPath));
+  const expectedPdfPath = path.join(outputDir, `${sourceBaseName}.pdf`);
+
+  const profileId = createId();
+  const profileDir = path.join(LIBREOFFICE_PROFILE_DIR, profileId);
+  fs.mkdirSync(profileDir, { recursive: true });
+
+  const candidates = getLibreOfficeCandidates();
+
+  let lastError = null;
+
+  for (const command of candidates) {
+    try {
+      const args = [
+        "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--norestore",
+        `-env:UserInstallation=${fileUriFromPath(profileDir)}`,
+        "--convert-to",
+        "pdf:impress_pdf_Export",
+        "--outdir",
+        outputDir,
+        inputPath
+      ];
+
+      console.log("Convert PPT/PPTX:", command, args.join(" "));
+
+      const result = await execFilePromise(command, args, {
+        timeout: 90_000,
+        maxBuffer: 10 * 1024 * 1024
+      });
+
+      console.log("LibreOffice stdout:", result.stdout);
+      console.log("LibreOffice stderr:", result.stderr);
+
+      if (fs.existsSync(expectedPdfPath)) {
+        return expectedPdfPath;
+      }
+
+      const pdfFiles = fs
+        .readdirSync(outputDir)
+        .filter((file) => file.toLowerCase().endsWith(".pdf"))
+        .map((file) => path.join(outputDir, file))
+        .sort((a, b) => {
+          const aa = fs.statSync(a).mtimeMs;
+          const bb = fs.statSync(b).mtimeMs;
+          return bb - aa;
+        });
+
+      if (pdfFiles.length > 0) {
+        return pdfFiles[0];
+      }
+
+      throw new Error("LibreOffice selesai, tetapi file PDF hasil konversi tidak ditemukan.");
+    } catch (error) {
+      lastError = error;
+      console.error(`Gagal convert dengan ${command}:`, error.message);
+
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+    }
+  }
+
+  throw new Error(
+    `Gagal convert PPT/PPTX ke PDF. Pastikan LibreOffice tersedia. Detail: ${
+      lastError ? lastError.message : "unknown error"
+    }`
+  );
 }
 
 /* MATERIAL FILE SERVE */
@@ -621,7 +755,7 @@ app.post("/api/admin/save", requireAdmin, (req, res) => {
 
 /* MATERIAL API */
 
-app.post("/api/materials/upload", (req, res) => {
+app.post("/api/materials/upload", async (req, res) => {
   try {
     const roomId = String(req.body.roomId || "default").trim();
     const username = String(req.body.username || "User").trim();
@@ -647,23 +781,70 @@ app.post("/api/materials/upload", (req, res) => {
     }
 
     const ext = getExtensionFromMime(mimeType, filename);
-    const id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
-    const cleanBaseName = sanitizeFilePart(path.basename(filename, path.extname(filename))) || "material";
-    const storedName = `${id}-${cleanBaseName}${ext}`;
+    const id = createId();
+    const cleanBaseName =
+      sanitizeFilePart(path.basename(filename, path.extname(filename))) ||
+      "material";
 
     const dir = ensureMaterialRoomDir(roomId);
-    const filePath = path.join(dir, storedName);
 
-    fs.writeFileSync(filePath, buffer);
+    const originalStoredName = `${id}-${cleanBaseName}${ext}`;
+    const originalFilePath = path.join(dir, originalStoredName);
+
+    fs.writeFileSync(originalFilePath, buffer);
+
+    let materialStoredName = originalStoredName;
+    let materialUrl = getMaterialUrl(roomId, originalStoredName);
+    let materialMimeType = mimeType;
+    let renderMode = ext === ".pdf" ? "pdf" : "office";
+    let conversionStatus = ext === ".pdf" ? "not_needed" : "not_converted";
+    let convertedPdfStoredName = null;
+    let convertedPdfUrl = null;
+    let conversionError = null;
+
+    if (isOfficePresentation(ext)) {
+      try {
+        const convertedPdfPath = await convertPresentationToPdf(originalFilePath, dir);
+        const convertedName = path.basename(convertedPdfPath);
+
+        materialStoredName = convertedName;
+        materialUrl = getMaterialUrl(roomId, convertedName);
+        materialMimeType = "application/pdf";
+        renderMode = "pdf";
+        conversionStatus = "converted";
+        convertedPdfStoredName = convertedName;
+        convertedPdfUrl = materialUrl;
+      } catch (error) {
+        console.error("Konversi PPT/PPTX gagal:", error.message);
+
+        conversionStatus = "failed";
+        conversionError = error.message;
+
+        return res.status(500).json({
+          error:
+            "Gagal convert PPT/PPTX ke PDF. Pastikan LibreOffice terinstall di server. Kalau di Railway, pastikan Dockerfile sudah ikut terdeploy.",
+          detail: error.message
+        });
+      }
+    }
 
     const material = {
       id,
       roomId,
       filename,
-      storedName,
-      mimeType,
+      originalFilename: filename,
+      storedName: materialStoredName,
+      originalStoredName,
+      convertedPdfStoredName,
+      mimeType: materialMimeType,
+      sourceMimeType: mimeType,
       sizeBytes: buffer.length,
-      url: getMaterialUrl(roomId, storedName),
+      url: materialUrl,
+      originalUrl: getMaterialUrl(roomId, originalStoredName),
+      convertedPdfUrl,
+      renderMode,
+      conversionStatus,
+      conversionError,
       uploadedBy: username,
       uploadedRole: role,
       uploadedAt: Date.now()
@@ -865,7 +1046,10 @@ app.post("/api/iot/heartbeat", (req, res) => {
     rssi: Number(req.body.rssi || 0),
     uptimeMs: Number(req.body.uptimeMs || 0),
     freeHeap: Number(req.body.freeHeap || 0),
-    state: typeof req.body.state === "object" && req.body.state ? req.body.state : existing.state || {},
+    state:
+      typeof req.body.state === "object" && req.body.state
+        ? req.body.state
+        : existing.state || {},
     lastSeen: Date.now(),
     firstSeen: existing.firstSeen || Date.now(),
     lastAck: existing.lastAck || null,
@@ -967,7 +1151,7 @@ app.post("/api/admin/iot/:deviceId/control", requireAdmin, (req, res) => {
   }
 
   const pendingCommand = {
-    id: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+    id: createId(),
     command,
     payload,
     createdAt: Date.now()
