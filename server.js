@@ -101,9 +101,7 @@ function toPersistableIotDevices() {
   const persisted = {};
 
   Object.entries(iotDevices).forEach(([deviceId, device]) => {
-    persisted[deviceId] = {
-      ...device
-    };
+    persisted[deviceId] = { ...device };
   });
 
   return persisted;
@@ -263,7 +261,16 @@ function normalizeStroke(socket, rawStroke = {}) {
     ? rawStroke.type
     : "freehand";
 
-  const allowedTools = ["pen", "line", "rect", "circle", "text", "image"];
+  const allowedTools = [
+    "pen",
+    "highlighter",
+    "line",
+    "rect",
+    "circle",
+    "text",
+    "image"
+  ];
+
   const tool = allowedTools.includes(rawStroke.tool)
     ? rawStroke.tool
     : "pen";
@@ -284,6 +291,13 @@ function normalizeStroke(socket, rawStroke = {}) {
   const materialId = rawStroke.materialId ? String(rawStroke.materialId) : null;
   const pageNumber = Math.max(1, Number(rawStroke.pageNumber) || 1);
 
+  const opacity =
+    rawStroke.opacity !== undefined
+      ? Number(rawStroke.opacity)
+      : tool === "highlighter"
+        ? 0.35
+        : 1;
+
   return {
     id: String(rawStroke.id || createId()),
     roomId,
@@ -299,9 +313,14 @@ function normalizeStroke(socket, rawStroke = {}) {
     pageNumber,
     color: String(
       rawStroke.color ||
-      (socket.role === "teacher" ? "#111827" : "#2563eb")
+      (tool === "highlighter"
+        ? "#facc15"
+        : socket.role === "teacher"
+          ? "#111827"
+          : "#2563eb")
     ),
-    size: Math.max(1, Math.min(40, Number(rawStroke.size) || 3)),
+    size: Math.max(1, Math.min(60, Number(rawStroke.size) || 3)),
+    opacity: Math.max(0.05, Math.min(1, Number.isFinite(opacity) ? opacity : 1)),
     fontSize: Math.max(10, Math.min(96, Number(rawStroke.fontSize) || 28)),
     width: Math.max(1, Math.min(1280, Number(rawStroke.width) || 240)),
     height: Math.max(1, Math.min(720, Number(rawStroke.height) || 160)),
@@ -493,11 +512,7 @@ async function convertPresentationToPdf(inputPath, outputDir) {
         .readdirSync(outputDir)
         .filter((file) => file.toLowerCase().endsWith(".pdf"))
         .map((file) => path.join(outputDir, file))
-        .sort((a, b) => {
-          const aa = fs.statSync(a).mtimeMs;
-          const bb = fs.statSync(b).mtimeMs;
-          return bb - aa;
-        });
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
 
       if (pdfFiles.length > 0) {
         return pdfFiles[0];
@@ -597,6 +612,7 @@ function getRoomSummary(roomId, room) {
   const shapeCount = strokes.filter((s) => s.type === "shape").length;
   const textCount = strokes.filter((s) => s.type === "text").length;
   const imageCount = strokes.filter((s) => s.type === "image").length;
+  const highlighterCount = strokes.filter((s) => s.tool === "highlighter").length;
 
   return {
     roomId,
@@ -610,6 +626,7 @@ function getRoomSummary(roomId, room) {
     shapeCount,
     textCount,
     imageCount,
+    highlighterCount,
     materialCount: Array.isArray(room.materials) ? room.materials.length : 0,
     currentMaterialId: room.currentMaterialId || null,
     currentMaterialPage: Number(room.currentMaterialPage) || 1,

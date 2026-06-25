@@ -37,6 +37,7 @@ const sidePanelCloseBtn = document.getElementById("sidePanelCloseBtn");
 const panTool = document.getElementById("panTool");
 const selectTool = document.getElementById("selectTool");
 const penTool = document.getElementById("penTool");
+const highlighterTool = document.getElementById("highlighterTool");
 const eraserTool = document.getElementById("eraserTool");
 const textTool = document.getElementById("textTool");
 const imageTool = document.getElementById("imageTool");
@@ -91,6 +92,9 @@ const VIRTUAL_HEIGHT = 720;
 const DEFAULT_TEACHER_COLOR = "#111827";
 const DEFAULT_STUDENT_COLOR = "#2563eb";
 
+const HIGHLIGHTER_COLOR = "#facc15";
+const HIGHLIGHTER_OPACITY = 0.35;
+
 const CURSOR_INTERVAL = 35;
 const STROKE_PROGRESS_INTERVAL = 18;
 
@@ -123,6 +127,7 @@ let currentMaterialPage = 1;
 let materialVisible = true;
 
 let pdfDoc = null;
+let pdfDocMaterialId = null;
 let pdfPageCount = 1;
 let pdfPageLayout = null;
 let pdfRenderTask = null;
@@ -179,8 +184,31 @@ function isPdfMaterial(material) {
 
   const name = String(material.filename || "").toLowerCase();
   const mime = String(material.mimeType || "").toLowerCase();
+  const renderMode = String(material.renderMode || "").toLowerCase();
 
-  return mime === "application/pdf" || name.endsWith(".pdf");
+  return renderMode === "pdf" || mime === "application/pdf" || name.endsWith(".pdf");
+}
+
+function isHighlighterStroke(stroke) {
+  return stroke && stroke.tool === "highlighter";
+}
+
+function getActiveStrokeColor() {
+  if (tool === "highlighter") return HIGHLIGHTER_COLOR;
+  return color;
+}
+
+function getActiveStrokeSize() {
+  if (tool === "highlighter") {
+    return Math.min(60, Math.max(14, Number(sizeSlider.value) * 4));
+  }
+
+  return size;
+}
+
+function getActiveStrokeOpacity() {
+  if (tool === "highlighter") return HIGHLIGHTER_OPACITY;
+  return 1;
 }
 
 function getActiveAnnotationContext() {
@@ -198,14 +226,17 @@ function getActiveAnnotationContext() {
 }
 
 function isStrokeVisibleInCurrentContext(stroke) {
-  if (!stroke.materialId) return true;
+  const inMaterialContext =
+    currentMaterial && materialVisible && isPdfMaterial(currentMaterial);
 
-  if (!currentMaterial || !materialVisible) return false;
+  if (inMaterialContext) {
+    return (
+      stroke.materialId === currentMaterial.id &&
+      Number(stroke.pageNumber || 1) === Number(currentMaterialPage || 1)
+    );
+  }
 
-  return (
-    stroke.materialId === currentMaterial.id &&
-    Number(stroke.pageNumber || 1) === Number(currentMaterialPage || 1)
-  );
+  return !stroke.materialId;
 }
 
 function getVisibleStrokes() {
@@ -408,6 +439,7 @@ function updateToolUI() {
     [panTool, "pan"],
     [selectTool, "select"],
     [penTool, "pen"],
+    [highlighterTool, "highlighter"],
     [eraserTool, "eraser"],
     [textTool, "text"],
     [imageTool, "image"],
@@ -436,6 +468,7 @@ function updateToolUI() {
   canvas.classList.toggle("pan-cursor", tool === "pan");
   canvas.classList.toggle("select-cursor", tool === "select");
   canvas.classList.toggle("eraser-cursor", tool === "eraser");
+  canvas.classList.toggle("highlighter-cursor", tool === "highlighter");
   canvas.classList.toggle("text-cursor", tool === "text");
   canvas.classList.toggle("image-cursor", tool === "image");
   canvas.classList.toggle("material-cursor", tool === "material");
@@ -444,6 +477,7 @@ function updateToolUI() {
     pan: "Mode: Pan",
     select: "Mode: Select",
     pen: "Mode: Pen",
+    highlighter: "Mode: Stabilo",
     eraser: "Mode: Eraser",
     text: "Mode: Text",
     image: "Mode: Image",
@@ -506,7 +540,10 @@ function clearScreenOnly(
   oy = offsetY,
   includeOutside = true
 ) {
-  renderCtx.clearRect(0, 0, canvas.width, canvas.height);
+  const width = renderCtx.canvas ? renderCtx.canvas.width : canvas.width;
+  const height = renderCtx.canvas ? renderCtx.canvas.height : canvas.height;
+
+  renderCtx.clearRect(0, 0, width, height);
 
   const boardX = ox;
   const boardY = oy;
@@ -520,12 +557,12 @@ function clearScreenOnly(
     renderCtx.fillStyle = "#e5e7eb";
 
     if (materialIsShowing) {
-      renderCtx.fillRect(0, 0, canvas.width, Math.max(0, boardY));
-      renderCtx.fillRect(0, boardY + boardH, canvas.width, Math.max(0, canvas.height - (boardY + boardH)));
+      renderCtx.fillRect(0, 0, width, Math.max(0, boardY));
+      renderCtx.fillRect(0, boardY + boardH, width, Math.max(0, height - (boardY + boardH)));
       renderCtx.fillRect(0, boardY, Math.max(0, boardX), boardH);
-      renderCtx.fillRect(boardX + boardW, boardY, Math.max(0, canvas.width - (boardX + boardW)), boardH);
+      renderCtx.fillRect(boardX + boardW, boardY, Math.max(0, width - (boardX + boardW)), boardH);
     } else {
-      renderCtx.fillRect(0, 0, canvas.width, canvas.height);
+      renderCtx.fillRect(0, 0, width, height);
     }
   }
 
@@ -583,6 +620,7 @@ function isInsideBoard(x, y) {
 }
 
 function getStrokeColor(stroke) {
+  if (isHighlighterStroke(stroke)) return HIGHLIGHTER_COLOR;
   return stroke.color || (stroke.role === "teacher" ? DEFAULT_TEACHER_COLOR : DEFAULT_STUDENT_COLOR);
 }
 
@@ -623,11 +661,19 @@ function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
 
   if (!pts || pts.length === 0) return;
 
-  const strokeColor = getStrokeColor(stroke);
-  const strokeSize = Math.max(1, (stroke.size || 3) * s);
+  const highlighter = isHighlighterStroke(stroke);
+  const strokeColor = highlighter ? HIGHLIGHTER_COLOR : getStrokeColor(stroke);
+  const strokeSize = Math.max(1, (stroke.size || (highlighter ? 16 : 3)) * s);
+  const strokeOpacity =
+    typeof stroke.opacity === "number"
+      ? stroke.opacity
+      : highlighter
+        ? HIGHLIGHTER_OPACITY
+        : 1;
 
   renderCtx.save();
 
+  renderCtx.globalAlpha = strokeOpacity;
   renderCtx.strokeStyle = strokeColor;
   renderCtx.fillStyle = strokeColor;
   renderCtx.lineWidth = strokeSize;
@@ -681,6 +727,8 @@ function drawShapeStroke(renderCtx, stroke, s, ox, oy) {
   renderCtx.save();
 
   renderCtx.strokeStyle = getStrokeColor(stroke);
+  renderCtx.globalAlpha =
+    typeof stroke.opacity === "number" ? stroke.opacity : 1;
   renderCtx.lineWidth = Math.max(1, (stroke.size || 3) * s);
   renderCtx.lineCap = "round";
   renderCtx.lineJoin = "round";
@@ -723,6 +771,8 @@ function drawTextStroke(renderCtx, stroke, s, ox, oy) {
   const fontSize = stroke.fontSize || 28;
 
   renderCtx.save();
+  renderCtx.globalAlpha =
+    typeof stroke.opacity === "number" ? stroke.opacity : 1;
   renderCtx.fillStyle = getStrokeColor(stroke);
   renderCtx.font = `${fontSize * s}px Arial`;
   renderCtx.textBaseline = "top";
@@ -753,6 +803,9 @@ function drawImageStroke(renderCtx, stroke, s, ox, oy) {
   const image = getCachedImage(stroke.src);
 
   renderCtx.save();
+
+  renderCtx.globalAlpha =
+    typeof stroke.opacity === "number" ? stroke.opacity : 1;
 
   if (image) {
     renderCtx.drawImage(image, x, y, w, h);
@@ -831,9 +884,11 @@ function redrawAll() {
   clearScreenOnly();
 
   getVisibleStrokes().forEach((stroke) => drawStrokeOn(ctx, stroke));
+
   Object.values(activeRemoteStrokes).forEach((stroke) => {
     if (isStrokeVisibleInCurrentContext(stroke)) drawStrokeOn(ctx, stroke);
   });
+
   Object.values(activeStrokes).forEach((stroke) => drawStrokeOn(ctx, stroke));
   Object.values(activeShapes).forEach((stroke) => drawStrokeOn(ctx, stroke));
 
@@ -1226,6 +1281,7 @@ function createTextAt(pos) {
     text,
     color,
     size,
+    opacity: 1,
     fontSize: Math.max(16, Number(sizeSlider.value) * 5 + 14),
     points: [pos],
     createdAt: Date.now()
@@ -1326,6 +1382,7 @@ async function addImageFileToBoard(file) {
       src: imageData.src,
       width: displaySize.width,
       height: displaySize.height,
+      opacity: 1,
       points: [{ x, y }],
       createdAt: Date.now()
     });
@@ -1420,7 +1477,7 @@ function getMaterialViewerUrl(material) {
   const name = String(material.filename || "").toLowerCase();
   const mime = String(material.mimeType || "").toLowerCase();
 
-  if (mime === "application/pdf" || name.endsWith(".pdf")) return material.url;
+  if (isPdfMaterial(material)) return material.url;
 
   if (name.endsWith(".ppt") || name.endsWith(".pptx") || mime.includes("powerpoint")) {
     return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
@@ -1434,12 +1491,14 @@ async function loadPdfDoc(material) {
     throw new Error("PDF.js belum termuat.");
   }
 
-  if (pdfDoc && currentMaterial && material && currentMaterial.id === material.id) {
+  if (pdfDoc && pdfDocMaterialId === material.id) {
     return pdfDoc;
   }
 
   pdfDoc = await pdfjsLib.getDocument(material.url).promise;
+  pdfDocMaterialId = material.id;
   pdfPageCount = pdfDoc.numPages || 1;
+
   return pdfDoc;
 }
 
@@ -1565,12 +1624,15 @@ async function syncMaterialPage(pageNumber) {
 }
 
 async function setCurrentMaterial(material, visible = true, pageNumber = 1) {
+  const previousMaterialId = currentMaterial ? currentMaterial.id : null;
+
   currentMaterial = material || null;
   materialVisible = Boolean(material && visible);
   currentMaterialPage = Math.max(1, Number(pageNumber) || 1);
 
-  if (!currentMaterial || !materialVisible) {
+  if (!currentMaterial || previousMaterialId !== currentMaterial.id) {
     pdfDoc = null;
+    pdfDocMaterialId = null;
     pdfPageCount = 1;
     pdfPageLayout = null;
     lastPdfRenderKey = "";
@@ -1595,13 +1657,14 @@ async function renderMaterialViewer() {
   materialBadge.classList.remove("hidden");
 
   materialName.textContent = currentMaterial.filename || "Material";
-  materialOpenLink.href = currentMaterial.url;
-  materialOpenBtn.dataset.url = currentMaterial.url;
+  materialOpenLink.href = currentMaterial.originalUrl || currentMaterial.url;
+  materialOpenBtn.dataset.url = currentMaterial.originalUrl || currentMaterial.url;
 
   const lowerName = String(currentMaterial.filename || "").toLowerCase();
 
   if (isPdfMaterial(currentMaterial)) {
     materialFrame.style.display = "none";
+    materialFrame.removeAttribute("src");
     materialFallback.classList.add("hidden");
     pdfCanvas.style.display = "block";
     await renderCurrentPdfPage(true);
@@ -1668,7 +1731,12 @@ function renderMaterialList() {
       title.textContent = material.filename || "Material";
 
       const meta = document.createElement("span");
-      meta.textContent = `${Math.max(1, Math.round((material.sizeBytes || 0) / 1024))} KB`;
+      const convertInfo =
+        material.conversionStatus === "converted"
+          ? " • converted to PDF"
+          : "";
+
+      meta.textContent = `${Math.max(1, Math.round((material.sizeBytes || 0) / 1024))} KB${convertInfo}`;
 
       info.appendChild(title);
       info.appendChild(meta);
@@ -1700,7 +1768,7 @@ function renderMaterialList() {
       const openBtn = document.createElement("button");
       openBtn.type = "button";
       openBtn.textContent = "Open";
-      openBtn.addEventListener("click", () => window.open(material.url, "_blank"));
+      openBtn.addEventListener("click", () => window.open(material.originalUrl || material.url, "_blank"));
 
       actions.appendChild(showBtn);
       actions.appendChild(openBtn);
@@ -1712,15 +1780,18 @@ function renderMaterialList() {
 }
 
 function startFreehandStroke(pointerId, pos) {
+  const activeTool = tool === "highlighter" ? "highlighter" : "pen";
+
   activeStrokes[pointerId] = withAnnotationContext({
     id: uid(),
     roomId,
     username,
     role,
     type: "freehand",
-    tool: "pen",
-    color,
-    size,
+    tool: activeTool,
+    color: getActiveStrokeColor(),
+    size: getActiveStrokeSize(),
+    opacity: getActiveStrokeOpacity(),
     points: [pos],
     createdAt: Date.now()
   });
@@ -1767,6 +1838,7 @@ function startShape(pointerId, pos, shape) {
     shape,
     color,
     size,
+    opacity: 1,
     points: [pos, pos],
     createdAt: Date.now()
   });
@@ -1986,6 +2058,7 @@ sidePanelCloseBtn.addEventListener("click", () => sidePanel.classList.remove("op
 panTool.addEventListener("click", () => setTool("pan"));
 selectTool.addEventListener("click", () => setTool("select"));
 penTool.addEventListener("click", () => setTool("pen"));
+highlighterTool.addEventListener("click", () => setTool("highlighter"));
 eraserTool.addEventListener("click", () => setTool("eraser"));
 textTool.addEventListener("click", () => setTool("text"));
 
@@ -2015,7 +2088,7 @@ materialInput.addEventListener("change", (event) => {
 
 materialOpenBtn.addEventListener("click", () => {
   if (!currentMaterial) return;
-  window.open(currentMaterial.url, "_blank");
+  window.open(currentMaterial.originalUrl || currentMaterial.url, "_blank");
 });
 
 materialHideBtn.addEventListener("click", async () => {
@@ -2121,7 +2194,11 @@ async function drawStrokeOnExport(renderCtx, stroke) {
   const image = await loadImageForExport(stroke.src);
 
   if (image) {
+    renderCtx.save();
+    renderCtx.globalAlpha =
+      typeof stroke.opacity === "number" ? stroke.opacity : 1;
     renderCtx.drawImage(image, p.x, p.y, stroke.width || 240, stroke.height || 160);
+    renderCtx.restore();
     return;
   }
 
@@ -2190,15 +2267,44 @@ async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNum
     );
   });
 
-  pageStrokes.forEach((stroke) => {
-    drawStrokeOn(exportCtx, stroke, scaleFactor, 0, 0);
-  });
+  for (const stroke of pageStrokes) {
+    await drawStrokeOnExportWithScale(exportCtx, stroke, scaleFactor);
+  }
+}
+
+async function drawStrokeOnExportWithScale(renderCtx, stroke, scaleFactor) {
+  if (stroke.type !== "image") {
+    drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
+    return;
+  }
+
+  const p = stroke.points && stroke.points[0];
+  if (!p) return;
+
+  const image = await loadImageForExport(stroke.src);
+
+  if (image) {
+    renderCtx.save();
+    renderCtx.globalAlpha =
+      typeof stroke.opacity === "number" ? stroke.opacity : 1;
+    renderCtx.drawImage(
+      image,
+      p.x * scaleFactor,
+      p.y * scaleFactor,
+      (stroke.width || 240) * scaleFactor,
+      (stroke.height || 160) * scaleFactor
+    );
+    renderCtx.restore();
+    return;
+  }
+
+  drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
 }
 
 exportAnnotatedPdfBtn.addEventListener("click", async () => {
   try {
     if (!currentMaterial || !isPdfMaterial(currentMaterial)) {
-      alert("Export annotated PDF hanya tersedia untuk material PDF.");
+      alert("Export annotated PDF hanya tersedia untuk material PDF/PPT yang sudah dikonversi.");
       return;
     }
 
@@ -2305,6 +2411,7 @@ window.addEventListener("keydown", (event) => {
   if (key === "h") setTool("pan");
   if (key === "v") setTool("select");
   if (key === "p") setTool("pen");
+  if (key === "s") setTool("highlighter");
   if (key === "e") setTool("eraser");
   if (key === "t") setTool("text");
 

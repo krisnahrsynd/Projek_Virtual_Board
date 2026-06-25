@@ -18,8 +18,6 @@ button {
   touch-action: manipulation;
 }
 
-/* DASHBOARD */
-
 .dashboard-page {
   min-height: 100dvh;
   display: flex;
@@ -161,6 +159,10 @@ canvas.eraser-cursor {
   cursor: cell;
 }
 
+canvas.highlighter-cursor {
+  cursor: crosshair;
+}
+
 canvas.text-cursor {
   cursor: text;
 }
@@ -181,7 +183,7 @@ canvas.select-cursor:active {
   cursor: grabbing;
 }
 
-/* MATERIAL VIEWER */
+/* MATERIAL */
 
 .material-layer {
   position: absolute;
@@ -293,7 +295,7 @@ canvas.select-cursor:active {
   font-weight: 700;
 }
 
-/* FLOATING TOOLBAR */
+/* TOOLBAR */
 
 .floating-toolbar {
   position: absolute;
@@ -340,6 +342,22 @@ canvas.select-cursor:active {
   background: #111827;
   color: white;
   border-color: #111827;
+}
+
+.tool-btn.highlighter-btn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #facc15;
+}
+
+.tool-btn.highlighter-btn:hover {
+  background: #fde68a;
+}
+
+.tool-btn.highlighter-btn.active {
+  background: #facc15;
+  color: #111827;
+  border-color: #eab308;
 }
 
 .shape-tool-group {
@@ -410,7 +428,7 @@ canvas.select-cursor:active {
   box-shadow: 0 14px 35px rgba(15, 23, 42, 0.22);
 }
 
-/* ZOOM HUD */
+/* ZOOM */
 
 .zoom-hud {
   position: absolute;
@@ -446,8 +464,6 @@ canvas.select-cursor:active {
   color: #111827;
   font-weight: 700;
 }
-
-/* STATUS */
 
 .status-toast {
   position: absolute;
@@ -631,513 +647,7 @@ canvas.select-cursor:active {
   background: #111827;
 }
 
-/* ADMIN ROOM MANAGEMENT */
-
-.admin-page {
-  min-height: 100dvh;
-  background: #eef2f7;
-  color: #111827;
-}
-
-.admin-shell {
-  width: min(1180px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 28px 0;
-}
-
-.admin-header {
-  background: #111827;
-  color: white;
-  border-radius: 18px;
-  padding: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.admin-header h1 {
-  margin: 0;
-  font-size: 28px;
-}
-
-.admin-header p {
-  margin: 6px 0 0;
-  color: #d1d5db;
-}
-
-.admin-header-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.admin-header-actions button {
-  background: #2563eb;
-}
-
-.admin-card,
-.admin-dashboard {
-  background: white;
-  border-radius: 18px;
-  padding: 22px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-}
-
-.admin-login {
-  width: min(460px, 100%);
-  margin: 0 auto;
-}
-
-.admin-login h2 {
-  margin-top: 0;
-}
-
-.hidden {
-  display: none !important;
-}
-
-/* RESPONSIVE */
-
-@media (max-width: 1180px) {
-  :root {
-    --floating-bottom: calc(42px + var(--safe-bottom));
-    --floating-side: 24px;
-  }
-
-  .topbar {
-    min-height: 96px;
-    height: auto;
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 12px 16px;
-  }
-
-  .board-meta {
-    flex-wrap: wrap;
-    white-space: normal;
-  }
-
-  .top-actions {
-    flex-wrap: wrap;
-  }
-
-  .board-shell {
-    height: calc(100dvh - 118px);
-  }
-
-  .floating-toolbar {
-    top: 18px;
-    max-width: calc(100% - 32px);
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .compact-section {
-    border-left: none;
-    padding-left: 0;
-  }
-
-  .status-toast {
-    bottom: calc(var(--floating-bottom) + 74px);
-  }
-
-  .material-badge {
-    top: 96px;
-  }
-}
-
-@media (max-width: 900px) {
-  :root {
-    --floating-bottom: calc(54px + var(--safe-bottom));
-    --floating-side: 26px;
-  }
-
-  .toolbar-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    bottom: var(--floating-bottom);
-  }
-
-  .zoom-hud {
-    bottom: var(--floating-bottom);
-    right: var(--floating-side);
-  }
-
-  .status-toast {
-    bottom: calc(var(--floating-bottom) + 76px);
-  }
-
-  .floating-toolbar {
-    left: 16px;
-    right: 16px;
-    top: auto;
-    bottom: calc(var(--floating-bottom) + 74px);
-    transform: translateY(125%);
-    opacity: 0;
-    pointer-events: none;
-    max-height: 46vh;
-    overflow-y: auto;
-    overflow-x: visible;
-    justify-content: flex-start;
-    transition: transform 0.22s ease, opacity 0.22s ease;
-  }
-
-  .floating-toolbar.open {
-    transform: translateY(0);
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .toolbar-section {
-    flex-wrap: wrap;
-    width: 100%;
-  }
-
-  .compact-section {
-    width: 100%;
-  }
-
-  .tool-size {
-    width: 100%;
-  }
-
-  .tool-size input[type="range"] {
-    flex: 1;
-    width: 100%;
-  }
-
-  .shape-tool-group {
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: stretch;
-  }
-
-  #shapeMenuBtn {
-    min-width: 104px;
-  }
-
-  .shape-menu {
-    position: static;
-    display: none;
-    width: 100%;
-    min-width: 0;
-    margin-top: 8px;
-    padding: 8px;
-    border-radius: 14px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    box-shadow: none;
-  }
-
-  .shape-menu.open {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .shape-option {
-    width: auto;
-    text-align: center;
-    padding: 11px 10px;
-  }
-
-  .material-badge {
-    top: 12px;
-    left: 12px;
-    right: 12px;
-    transform: none;
-    max-width: none;
-    border-radius: 14px;
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 760px) {
-  :root {
-    --floating-bottom: calc(58px + var(--safe-bottom));
-    --floating-side: 18px;
-  }
-
-  .topbar {
-    min-height: 126px;
-  }
-
-  .board-shell {
-    height: calc(100dvh - 140px);
-  }
-
-  .status-toast {
-    bottom: calc(var(--floating-bottom) + 78px);
-    max-width: calc(100% - 32px);
-    text-align: center;
-  }
-
-  .side-panel {
-    top: 10px;
-    right: 10px;
-    bottom: calc(10px + var(--safe-bottom));
-    width: min(320px, calc(100% - 20px));
-  }
-
-  .zoom-hud {
-    gap: 5px;
-    padding: 7px;
-  }
-
-  .zoom-hud button {
-    padding: 8px 10px;
-  }
-
-  #zoomLabel {
-    min-width: 48px;
-  }
-
-  .shape-menu.open {
-    grid-template-columns: 1fr;
-  }
-
-  .shape-option {
-    text-align: left;
-  }
-}
-
-/* SMART CLASSROOM IOT DASHBOARD */
-
-.admin-section-card {
-  margin-bottom: 18px;
-}
-
-.section-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.section-title-row h2 {
-  margin: 0;
-  font-size: 22px;
-}
-
-.section-title-row p {
-  margin: 6px 0 0;
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.iot-device-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-}
-
-.iot-card {
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  border-radius: 18px;
-  padding: 18px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.iot-card-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.iot-card-header h3 {
-  margin: 0;
-  font-size: 21px;
-}
-
-.iot-card-header p {
-  margin: 5px 0 0;
-  color: #6b7280;
-  font-size: 13px;
-}
-
-.iot-sensor-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.iot-sensor-card {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 14px;
-  padding: 12px;
-}
-
-.iot-sensor-card span {
-  display: block;
-  color: #6b7280;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.iot-sensor-card strong {
-  font-size: 20px;
-  color: #111827;
-}
-
-.iot-status-panel {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 12px;
-  border-radius: 16px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-}
-
-.iot-status-panel div {
-  min-width: 0;
-}
-
-.iot-status-panel span {
-  display: block;
-  color: #1d4ed8;
-  font-size: 12px;
-  margin-bottom: 5px;
-}
-
-.iot-status-panel strong {
-  display: block;
-  color: #111827;
-  font-size: 14px;
-  word-break: break-word;
-}
-
-.iot-command-panel {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.iot-command-group {
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  border-radius: 14px;
-  padding: 12px;
-}
-
-.iot-command-group > strong {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 14px;
-  color: #111827;
-}
-
-.iot-command-group div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.iot-command-group button,
-.iot-bind-panel button {
-  padding: 8px 11px;
-  font-size: 12px;
-  background: #111827;
-}
-
-.iot-command-group button:hover,
-.iot-bind-panel button:hover {
-  background: #374151;
-}
-
-.iot-command-group button.warning,
-.iot-bind-panel button.warning {
-  background: #f59e0b;
-}
-
-.iot-command-group button.danger,
-.iot-bind-panel button.danger {
-  background: #dc2626;
-}
-
-.iot-temp-control {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.iot-temp-control input {
-  width: 110px;
-  padding: 8px 10px;
-  font-size: 13px;
-}
-
-.iot-bind-panel {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid #e5e7eb;
-}
-
-.iot-bind-panel input {
-  flex: 1;
-  min-width: 140px;
-  padding: 9px 10px;
-  font-size: 13px;
-}
-
-.iot-last-ack {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
-  color: #047857;
-  font-size: 13px;
-}
-
-@media (max-width: 1000px) {
-  .iot-sensor-grid,
-  .iot-status-panel {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .iot-card-header {
-    flex-direction: column;
-  }
-}
-
-@media (max-width: 640px) {
-  .section-title-row {
-    flex-direction: column;
-  }
-
-  .iot-sensor-grid,
-  .iot-status-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .iot-bind-panel {
-    flex-direction: column;
-  }
-
-  .iot-bind-panel input,
-  .iot-temp-control input {
-    width: 100%;
-  }
-}
-
-/* ============================= */
-/* ADMIN DASHBOARD FINAL POLISH */
-/* ============================= */
+/* ADMIN */
 
 .admin-page {
   min-height: 100dvh;
@@ -1450,7 +960,7 @@ canvas.select-cursor:active {
   border: 1px dashed #cbd5e1;
 }
 
-/* IOT CARD */
+/* IOT ADMIN */
 
 .iot-device-grid {
   display: grid;
@@ -1623,6 +1133,56 @@ canvas.select-cursor:active {
   font-size: 13px;
 }
 
+/* RESPONSIVE */
+
+@media (max-width: 1180px) {
+  :root {
+    --floating-bottom: calc(42px + var(--safe-bottom));
+    --floating-side: 24px;
+  }
+
+  .topbar {
+    min-height: 96px;
+    height: auto;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 16px;
+  }
+
+  .board-meta {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .top-actions {
+    flex-wrap: wrap;
+  }
+
+  .board-shell {
+    height: calc(100dvh - 118px);
+  }
+
+  .floating-toolbar {
+    top: 18px;
+    max-width: calc(100% - 32px);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .compact-section {
+    border-left: none;
+    padding-left: 0;
+  }
+
+  .status-toast {
+    bottom: calc(var(--floating-bottom) + 74px);
+  }
+
+  .material-badge {
+    top: 96px;
+  }
+}
+
 @media (max-width: 1000px) {
   .admin-header {
     flex-direction: column;
@@ -1645,6 +1205,164 @@ canvas.select-cursor:active {
 
   .iot-card-header {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --floating-bottom: calc(54px + var(--safe-bottom));
+    --floating-side: 26px;
+  }
+
+  .toolbar-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    bottom: var(--floating-bottom);
+  }
+
+  .zoom-hud {
+    bottom: var(--floating-bottom);
+    right: var(--floating-side);
+  }
+
+  .status-toast {
+    bottom: calc(var(--floating-bottom) + 76px);
+  }
+
+  .floating-toolbar {
+    left: 16px;
+    right: 16px;
+    top: auto;
+    bottom: calc(var(--floating-bottom) + 74px);
+    transform: translateY(125%);
+    opacity: 0;
+    pointer-events: none;
+    max-height: 46vh;
+    overflow-y: auto;
+    overflow-x: visible;
+    justify-content: flex-start;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+  }
+
+  .floating-toolbar.open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .toolbar-section {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .compact-section {
+    width: 100%;
+  }
+
+  .tool-size {
+    width: 100%;
+  }
+
+  .tool-size input[type="range"] {
+    flex: 1;
+    width: 100%;
+  }
+
+  .shape-tool-group {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  #shapeMenuBtn {
+    min-width: 104px;
+  }
+
+  .shape-menu {
+    position: static;
+    display: none;
+    width: 100%;
+    min-width: 0;
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 14px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    box-shadow: none;
+  }
+
+  .shape-menu.open {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .shape-option {
+    width: auto;
+    text-align: center;
+    padding: 11px 10px;
+  }
+
+  .material-badge {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    transform: none;
+    max-width: none;
+    border-radius: 14px;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --floating-bottom: calc(58px + var(--safe-bottom));
+    --floating-side: 18px;
+  }
+
+  .topbar {
+    min-height: 126px;
+  }
+
+  .board-shell {
+    height: calc(100dvh - 140px);
+  }
+
+  .status-toast {
+    bottom: calc(var(--floating-bottom) + 78px);
+    max-width: calc(100% - 32px);
+    text-align: center;
+  }
+
+  .side-panel {
+    top: 10px;
+    right: 10px;
+    bottom: calc(10px + var(--safe-bottom));
+    width: min(320px, calc(100% - 20px));
+  }
+
+  .zoom-hud {
+    gap: 5px;
+    padding: 7px;
+  }
+
+  .zoom-hud button {
+    padding: 8px 10px;
+  }
+
+  #zoomLabel {
+    min-width: 48px;
+  }
+
+  .shape-menu.open {
+    grid-template-columns: 1fr;
+  }
+
+  .shape-option {
+    text-align: left;
   }
 }
 
