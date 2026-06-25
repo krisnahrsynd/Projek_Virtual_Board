@@ -183,6 +183,37 @@ canvas.select-cursor:active {
   cursor: grabbing;
 }
 
+/* INLINE CANVAS TEXT EDITOR */
+
+.canvas-text-editor {
+  position: absolute;
+  z-index: 80;
+  width: 280px;
+  min-height: 46px;
+  max-width: min(560px, calc(100vw - 40px));
+  padding: 8px 10px;
+  border: 2px solid #2563eb;
+  border-radius: 12px;
+  outline: none;
+  resize: both;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.96);
+  color: #111827;
+  font-family: Arial, sans-serif;
+  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.22);
+}
+
+.canvas-text-editor::placeholder {
+  color: #9ca3af;
+}
+
+.canvas-text-editor:focus {
+  border-color: #1d4ed8;
+  box-shadow:
+    0 0 0 4px rgba(37, 99, 235, 0.16),
+    0 14px 35px rgba(15, 23, 42, 0.22);
+}
+
 /* MATERIAL */
 
 .material-layer {

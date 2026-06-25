@@ -146,6 +146,8 @@ let lastStrokeProgressEmit = 0;
 let selectedStrokeId = null;
 let draggingSelection = null;
 
+let activeTextEditor = null;
+
 const activePointers = {};
 const activeStrokes = {};
 const activeShapes = {};
@@ -301,6 +303,7 @@ function updateCamera() {
 
   updateZoomLabel();
   positionMaterialLayer();
+  positionActiveTextEditor();
 }
 
 function fitView() {
@@ -327,6 +330,13 @@ function screenToVirtual(screenX, screenY) {
   return {
     x: (screenX - offsetX) / scale,
     y: (screenY - offsetY) / scale
+  };
+}
+
+function virtualToScreen(pos) {
+  return {
+    x: offsetX + pos.x * scale,
+    y: offsetY + pos.y * scale
   };
 }
 
@@ -360,6 +370,8 @@ function zoomAtCenter(factor) {
 }
 
 function startPan(pointerId, event) {
+  closeTextEditor(true);
+
   isPanning = true;
   panPointerId = pointerId;
   lastPanScreen = getScreenPosition(event);
@@ -425,6 +437,10 @@ function toggleShapeMenu() {
 }
 
 function setTool(nextTool) {
+  if (nextTool !== "text") {
+    closeTextEditor(true);
+  }
+
   tool = nextTool;
 
   if (!SHAPE_TOOLS.includes(nextTool)) {
@@ -1263,11 +1279,40 @@ function withAnnotationContext(baseStroke) {
   };
 }
 
-function createTextAt(pos) {
-  const text = window.prompt("Masukkan teks");
+/* INLINE TEXT EDITOR */
 
-  if (!text || !text.trim()) {
-    setStatus("Text dibatalkan.");
+function autoResizeTextEditor(textarea) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.max(46, textarea.scrollHeight + 6)}px`;
+}
+
+function positionActiveTextEditor() {
+  if (!activeTextEditor) return;
+
+  const screen = virtualToScreen(activeTextEditor.virtualPos);
+  const textarea = activeTextEditor.element;
+  const fontSize = activeTextEditor.fontSize * scale;
+
+  textarea.style.left = `${screen.x}px`;
+  textarea.style.top = `${screen.y}px`;
+  textarea.style.fontSize = `${Math.max(14, fontSize)}px`;
+  textarea.style.lineHeight = `${Math.max(18, fontSize * 1.25)}px`;
+}
+
+function closeTextEditor(commit = true) {
+  if (!activeTextEditor) return;
+
+  const editor = activeTextEditor;
+  const textarea = editor.element;
+  const text = textarea.value.trim();
+
+  activeTextEditor = null;
+
+  textarea.remove();
+
+  if (!commit || !text) {
+    setStatus(commit ? "Text kosong dibatalkan." : "Text dibatalkan.");
+    requestRedraw();
     return;
   }
 
@@ -1282,15 +1327,71 @@ function createTextAt(pos) {
     color,
     size,
     opacity: 1,
-    fontSize: Math.max(16, Number(sizeSlider.value) * 5 + 14),
-    points: [pos],
+    fontSize: editor.fontSize,
+    points: [editor.virtualPos],
     createdAt: Date.now()
   });
 
   strokes.push(stroke);
   socket.emit("stroke-add", stroke);
 
+  setStatus("Text berhasil ditambahkan.");
   requestRedraw();
+}
+
+function createTextAt(pos) {
+  if (activeTextEditor) {
+    closeTextEditor(true);
+  }
+
+  const textarea = document.createElement("textarea");
+
+  textarea.className = "canvas-text-editor";
+  textarea.placeholder = "Ketik teks...";
+  textarea.rows = 1;
+  textarea.spellcheck = false;
+
+  const fontSize = Math.max(16, Number(sizeSlider.value) * 5 + 14);
+
+  activeTextEditor = {
+    element: textarea,
+    virtualPos: pos,
+    fontSize
+  };
+
+  boardArea.appendChild(textarea);
+
+  positionActiveTextEditor();
+  autoResizeTextEditor(textarea);
+
+  textarea.focus();
+
+  textarea.addEventListener("input", () => {
+    autoResizeTextEditor(textarea);
+  });
+
+  textarea.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeTextEditor(false);
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      closeTextEditor(true);
+    }
+  });
+
+  textarea.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (activeTextEditor && activeTextEditor.element === textarea) {
+        closeTextEditor(true);
+      }
+    }, 120);
+  });
+
+  setStatus("Ketik teks langsung di canvas. Ctrl + Enter untuk simpan, Esc untuk batal.");
 }
 
 function compressImageFile(file) {
@@ -1356,6 +1457,7 @@ function getImageDisplaySize(naturalWidth, naturalHeight) {
 
 async function addImageFileToBoard(file) {
   try {
+    closeTextEditor(true);
     setStatus("Memproses gambar...");
 
     const imageData = await compressImageFile(file);
@@ -1415,6 +1517,8 @@ function readFileAsDataUrl(file) {
 
 async function uploadMaterialFile(file) {
   try {
+    closeTextEditor(true);
+
     if (!file) return;
 
     const allowed =
@@ -1610,6 +1714,8 @@ function updateMaterialPageLabel() {
 async function syncMaterialPage(pageNumber) {
   if (!currentMaterial) return;
 
+  closeTextEditor(true);
+
   currentMaterialPage = clamp(pageNumber, 1, pdfPageCount || 1);
 
   await fetch("/api/materials/set-page", {
@@ -1624,6 +1730,8 @@ async function syncMaterialPage(pageNumber) {
 }
 
 async function setCurrentMaterial(material, visible = true, pageNumber = 1) {
+  closeTextEditor(true);
+
   const previousMaterialId = currentMaterial ? currentMaterial.id : null;
 
   currentMaterial = material || null;
@@ -1780,6 +1888,8 @@ function renderMaterialList() {
 }
 
 function startFreehandStroke(pointerId, pos) {
+  closeTextEditor(true);
+
   const activeTool = tool === "highlighter" ? "highlighter" : "pen";
 
   activeStrokes[pointerId] = withAnnotationContext({
@@ -1828,6 +1938,8 @@ function finishFreehandStroke(pointerId) {
 }
 
 function startShape(pointerId, pos, shape) {
+  closeTextEditor(true);
+
   activeShapes[pointerId] = withAnnotationContext({
     id: uid(),
     roomId,
@@ -1934,11 +2046,13 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 
   if (tool === "image") {
+    closeTextEditor(true);
     imageInput.click();
     return;
   }
 
   if (tool === "material") {
+    closeTextEditor(true);
     materialInput.click();
     return;
   }
@@ -1961,6 +2075,7 @@ canvas.addEventListener("pointerdown", (event) => {
   }
 
   if (tool === "select") {
+    closeTextEditor(true);
     const selected = findSelectableStrokeAt(pos);
     startSelectionDrag(event.pointerId, pos, selected);
     return;
@@ -1968,11 +2083,21 @@ canvas.addEventListener("pointerdown", (event) => {
 
   if (tool === "text") {
     createTextAt(pos);
+
+    try {
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    } catch (error) {
+      // aman diabaikan
+    }
+
     delete activePointers[event.pointerId];
     return;
   }
 
   if (tool === "eraser") {
+    closeTextEditor(true);
     activeErasers[event.pointerId] = true;
     eraseAt(pos);
     return;
@@ -2092,6 +2217,7 @@ materialOpenBtn.addEventListener("click", () => {
 });
 
 materialHideBtn.addEventListener("click", async () => {
+  closeTextEditor(true);
   materialVisible = false;
   await setCurrentMaterial(null, false, 1);
   requestRedraw();
@@ -2158,8 +2284,15 @@ sizeSlider.addEventListener("input", (event) => {
   sizeLabel.textContent = size;
 });
 
-undoBtn.addEventListener("click", () => socket.emit("undo", { roomId }));
-redoBtn.addEventListener("click", () => socket.emit("redo", { roomId }));
+undoBtn.addEventListener("click", () => {
+  closeTextEditor(true);
+  socket.emit("undo", { roomId });
+});
+
+redoBtn.addEventListener("click", () => {
+  closeTextEditor(true);
+  socket.emit("redo", { roomId });
+});
 
 function loadImageForExport(src) {
   return new Promise((resolve) => {
@@ -2206,6 +2339,8 @@ async function drawStrokeOnExport(renderCtx, stroke) {
 }
 
 exportBtn.addEventListener("click", async () => {
+  closeTextEditor(true);
+
   const exportCanvas = document.createElement("canvas");
   const exportCtx = exportCanvas.getContext("2d");
 
@@ -2228,6 +2363,35 @@ exportBtn.addEventListener("click", async () => {
 
   setStatus("Board berhasil diekspor ke PNG.");
 });
+
+async function drawStrokeOnExportWithScale(renderCtx, stroke, scaleFactor) {
+  if (stroke.type !== "image") {
+    drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
+    return;
+  }
+
+  const p = stroke.points && stroke.points[0];
+  if (!p) return;
+
+  const image = await loadImageForExport(stroke.src);
+
+  if (image) {
+    renderCtx.save();
+    renderCtx.globalAlpha =
+      typeof stroke.opacity === "number" ? stroke.opacity : 1;
+    renderCtx.drawImage(
+      image,
+      p.x * scaleFactor,
+      p.y * scaleFactor,
+      (stroke.width || 240) * scaleFactor,
+      (stroke.height || 160) * scaleFactor
+    );
+    renderCtx.restore();
+    return;
+  }
+
+  drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
+}
 
 async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNumber, scaleFactor = 2) {
   exportCanvas.width = VIRTUAL_WIDTH * scaleFactor;
@@ -2272,37 +2436,10 @@ async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNum
   }
 }
 
-async function drawStrokeOnExportWithScale(renderCtx, stroke, scaleFactor) {
-  if (stroke.type !== "image") {
-    drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
-    return;
-  }
-
-  const p = stroke.points && stroke.points[0];
-  if (!p) return;
-
-  const image = await loadImageForExport(stroke.src);
-
-  if (image) {
-    renderCtx.save();
-    renderCtx.globalAlpha =
-      typeof stroke.opacity === "number" ? stroke.opacity : 1;
-    renderCtx.drawImage(
-      image,
-      p.x * scaleFactor,
-      p.y * scaleFactor,
-      (stroke.width || 240) * scaleFactor,
-      (stroke.height || 160) * scaleFactor
-    );
-    renderCtx.restore();
-    return;
-  }
-
-  drawStrokeOn(renderCtx, stroke, scaleFactor, 0, 0);
-}
-
 exportAnnotatedPdfBtn.addEventListener("click", async () => {
   try {
+    closeTextEditor(true);
+
     if (!currentMaterial || !isPdfMaterial(currentMaterial)) {
       alert("Export annotated PDF hanya tersedia untuk material PDF/PPT yang sudah dikonversi.");
       return;
@@ -2356,6 +2493,8 @@ exportAnnotatedPdfBtn.addEventListener("click", async () => {
 });
 
 clearBtn.addEventListener("click", () => {
+  closeTextEditor(true);
+
   if (role !== "teacher") {
     alert("Hanya guru yang dapat menghapus seluruh board.");
     return;
@@ -2368,6 +2507,8 @@ clearBtn.addEventListener("click", () => {
 });
 
 splitBtn.addEventListener("click", () => {
+  closeTextEditor(true);
+
   if (role !== "teacher") {
     alert("Hanya guru yang dapat mengatur split board.");
     return;
@@ -2378,6 +2519,8 @@ splitBtn.addEventListener("click", () => {
 });
 
 lockBtn.addEventListener("click", () => {
+  closeTextEditor(true);
+
   if (role !== "teacher") {
     alert("Hanya guru yang dapat mengunci board.");
     return;
@@ -2388,6 +2531,7 @@ lockBtn.addEventListener("click", () => {
 });
 
 backBtn.addEventListener("click", () => {
+  closeTextEditor(true);
   socket.emit("cursor-leave");
   window.location.href = "/";
 });
@@ -2496,6 +2640,8 @@ socket.on("material-set", async (data) => {
 socket.on("material-page-set", async (data) => {
   if (!currentMaterial || data.materialId !== currentMaterial.id) return;
 
+  closeTextEditor(true);
+
   currentMaterialPage = Math.max(1, Number(data.pageNumber) || 1);
   selectedStrokeId = null;
 
@@ -2551,6 +2697,8 @@ socket.on("stroke-update", (updatedStroke) => {
 });
 
 socket.on("clear", () => {
+  closeTextEditor(false);
+
   strokes = [];
   selectedStrokeId = null;
 
@@ -2598,7 +2746,11 @@ socket.on("room-deleted", (data) => {
 });
 
 window.addEventListener("resize", resizeCanvas);
-window.addEventListener("beforeunload", () => socket.emit("cursor-leave"));
+
+window.addEventListener("beforeunload", () => {
+  closeTextEditor(true);
+  socket.emit("cursor-leave");
+});
 
 updateTeacherControls();
 updateToolUI();
