@@ -151,7 +151,6 @@ let activeTextEditor = null;
 const activePointers = {};
 const activeStrokes = {};
 const activeShapes = {};
-const activeErasers = {};
 const activeRemoteStrokes = {};
 const remoteCursors = {};
 const imageCache = {};
@@ -204,7 +203,9 @@ function getActiveStrokeSize() {
   if (tool === "highlighter") {
     return Math.min(60, Math.max(14, Number(sizeSlider.value) * 4));
   }
-
+  if (tool === "eraser") {
+    return Math.min(80, Math.max(16, Number(sizeSlider.value) * 6));
+  }
   return size;
 }
 
@@ -494,7 +495,7 @@ function updateToolUI() {
     select: "Mode: Select",
     pen: "Mode: Pen",
     highlighter: "Mode: Stabilo",
-    eraser: "Mode: Eraser",
+    eraser: "Mode: Eraser Partial",
     text: "Mode: Text",
     image: "Mode: Image",
     material: "Mode: Material",
@@ -549,17 +550,15 @@ function hasVisibleMaterial() {
   return Boolean(currentMaterial && materialVisible);
 }
 
-function clearScreenOnly(
-  renderCtx = ctx,
-  s = scale,
-  ox = offsetX,
-  oy = offsetY,
-  includeOutside = true
-) {
+function clearScreenOnly(renderCtx = ctx) {
   const width = renderCtx.canvas ? renderCtx.canvas.width : canvas.width;
   const height = renderCtx.canvas ? renderCtx.canvas.height : canvas.height;
-
   renderCtx.clearRect(0, 0, width, height);
+}
+
+function drawBackground(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY, includeOutside = true) {
+  const width = renderCtx.canvas ? renderCtx.canvas.width : canvas.width;
+  const height = renderCtx.canvas ? renderCtx.canvas.height : canvas.height;
 
   const boardX = ox;
   const boardY = oy;
@@ -569,9 +568,20 @@ function clearScreenOnly(
   const isMainCanvas = renderCtx === ctx;
   const materialIsShowing = isMainCanvas && hasVisibleMaterial();
 
+  renderCtx.save();
+  renderCtx.globalCompositeOperation = "destination-over";
+
+  renderCtx.strokeStyle = "#111827";
+  renderCtx.lineWidth = Math.max(1, 2 * s);
+  renderCtx.strokeRect(boardX, boardY, boardW, boardH);
+
+  if (!materialIsShowing) {
+    renderCtx.fillStyle = "#ffffff";
+    renderCtx.fillRect(boardX, boardY, boardW, boardH);
+  }
+
   if (includeOutside) {
     renderCtx.fillStyle = "#e5e7eb";
-
     if (materialIsShowing) {
       renderCtx.fillRect(0, 0, width, Math.max(0, boardY));
       renderCtx.fillRect(0, boardY + boardH, width, Math.max(0, height - (boardY + boardH)));
@@ -582,14 +592,7 @@ function clearScreenOnly(
     }
   }
 
-  if (!materialIsShowing) {
-    renderCtx.fillStyle = "#ffffff";
-    renderCtx.fillRect(boardX, boardY, boardW, boardH);
-  }
-
-  renderCtx.strokeStyle = "#111827";
-  renderCtx.lineWidth = Math.max(1, 2 * s);
-  renderCtx.strokeRect(boardX, boardY, boardW, boardH);
+  renderCtx.restore();
 }
 
 function drawSplitLine(renderCtx = ctx, s = scale, ox = offsetX, oy = offsetY) {
@@ -678,6 +681,7 @@ function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
   if (!pts || pts.length === 0) return;
 
   const highlighter = isHighlighterStroke(stroke);
+  const isEraser = stroke.tool === "eraser";
   const strokeColor = highlighter ? HIGHLIGHTER_COLOR : getStrokeColor(stroke);
   const strokeSize = Math.max(1, (stroke.size || (highlighter ? 16 : 3)) * s);
   const strokeOpacity =
@@ -689,9 +693,18 @@ function drawFreehandStroke(renderCtx, stroke, s, ox, oy) {
 
   renderCtx.save();
 
-  renderCtx.globalAlpha = strokeOpacity;
-  renderCtx.strokeStyle = strokeColor;
-  renderCtx.fillStyle = strokeColor;
+  if (isEraser) {
+    renderCtx.globalCompositeOperation = "destination-out";
+    renderCtx.globalAlpha = 1;
+    renderCtx.strokeStyle = "rgba(0,0,0,1)";
+    renderCtx.fillStyle = "rgba(0,0,0,1)";
+  } else {
+    renderCtx.globalCompositeOperation = "source-over";
+    renderCtx.globalAlpha = strokeOpacity;
+    renderCtx.strokeStyle = strokeColor;
+    renderCtx.fillStyle = strokeColor;
+  }
+
   renderCtx.lineWidth = strokeSize;
   renderCtx.lineCap = "round";
   renderCtx.lineJoin = "round";
@@ -912,6 +925,8 @@ function redrawAll() {
   drawSplitLine();
   drawLockedOverlay();
   drawRemoteCursors();
+
+  drawBackground(ctx, scale, offsetX, offsetY, true);
 }
 
 function requestRedraw() {
@@ -1099,7 +1114,7 @@ function drawSelectionBox() {
   ctx.restore();
 }
 
-function canEraseLocal(stroke) {
+function canModifyLocal(stroke) {
   return role === "teacher" || stroke.username === username;
 }
 
@@ -1156,7 +1171,7 @@ function findSelectableStrokeAt(pos) {
   for (let i = visibleStrokes.length - 1; i >= 0; i--) {
     const stroke = visibleStrokes[i];
 
-    if (!canEraseLocal(stroke)) continue;
+    if (!canModifyLocal(stroke)) continue;
 
     if (strokeHitTest(stroke, pos, radius)) return stroke;
   }
@@ -1240,33 +1255,6 @@ function finishSelectionDrag(pointerId) {
   requestRedraw();
 
   return true;
-}
-
-function eraseAt(pos) {
-  const eraserRadius = Math.max(10, Number(sizeSlider.value) * 3);
-  const visibleStrokes = getVisibleStrokes();
-  let removed = false;
-
-  for (let i = visibleStrokes.length - 1; i >= 0; i--) {
-    const stroke = visibleStrokes[i];
-
-    if (!canEraseLocal(stroke)) continue;
-
-    if (strokeHitTest(stroke, pos, eraserRadius)) {
-      const strokeId = stroke.id;
-
-      strokes = strokes.filter((item) => item.id !== strokeId);
-
-      socket.emit("erase-stroke", { roomId, strokeId });
-
-      if (selectedStrokeId === strokeId) selectedStrokeId = null;
-
-      removed = true;
-      break;
-    }
-  }
-
-  if (removed) requestRedraw();
 }
 
 function withAnnotationContext(baseStroke) {
@@ -1890,7 +1878,7 @@ function renderMaterialList() {
 function startFreehandStroke(pointerId, pos) {
   closeTextEditor(true);
 
-  const activeTool = tool === "highlighter" ? "highlighter" : "pen";
+  const activeTool = tool === "highlighter" ? "highlighter" : (tool === "eraser" ? "eraser" : "pen");
 
   activeStrokes[pointerId] = withAnnotationContext({
     id: uid(),
@@ -2014,11 +2002,6 @@ function stopPointer(event) {
 
   delete activePointers[pointerId];
 
-  if (activeErasers[pointerId]) {
-    delete activeErasers[pointerId];
-    return;
-  }
-
   finishFreehandStroke(pointerId);
   finishShape(pointerId);
 }
@@ -2096,13 +2079,6 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
-  if (tool === "eraser") {
-    closeTextEditor(true);
-    activeErasers[event.pointerId] = true;
-    eraseAt(pos);
-    return;
-  }
-
   if (tool === "line" || tool === "rect" || tool === "circle") {
     startShape(event.pointerId, pos, tool);
     requestRedraw();
@@ -2136,11 +2112,6 @@ canvas.addEventListener("pointermove", (event) => {
 
   if (draggingSelection && draggingSelection.pointerId === event.pointerId) {
     updateSelectionDrag(event.pointerId, pos);
-    return;
-  }
-
-  if (activeErasers[event.pointerId]) {
-    eraseAt(pos);
     return;
   }
 
@@ -2347,14 +2318,19 @@ exportBtn.addEventListener("click", async () => {
   exportCanvas.width = VIRTUAL_WIDTH;
   exportCanvas.height = VIRTUAL_HEIGHT;
 
-  exportCtx.fillStyle = "#ffffff";
-  exportCtx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+  exportCtx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
   for (const stroke of getVisibleStrokes()) {
     await drawStrokeOnExport(exportCtx, stroke);
   }
 
   if (splitMode) drawSplitLine(exportCtx, 1, 0, 0);
+
+  exportCtx.save();
+  exportCtx.globalCompositeOperation = "destination-over";
+  exportCtx.fillStyle = "#ffffff";
+  exportCtx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+  exportCtx.restore();
 
   const link = document.createElement("a");
   link.download = `${roomId}-virtual-board.png`;
@@ -2397,8 +2373,18 @@ async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNum
   exportCanvas.width = VIRTUAL_WIDTH * scaleFactor;
   exportCanvas.height = VIRTUAL_HEIGHT * scaleFactor;
 
-  exportCtx.fillStyle = "#ffffff";
-  exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  exportCtx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+  const pageStrokes = strokes.filter((stroke) => {
+    return (
+      stroke.materialId === currentMaterial.id &&
+      Number(stroke.pageNumber || 1) === pageNumber
+    );
+  });
+
+  for (const stroke of pageStrokes) {
+    await drawStrokeOnExportWithScale(exportCtx, stroke, scaleFactor);
+  }
 
   const page = await doc.getPage(pageNumber);
   const layout = getPdfPageLayout(page);
@@ -2416,6 +2402,8 @@ async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNum
     viewport
   }).promise;
 
+  exportCtx.save();
+  exportCtx.globalCompositeOperation = "destination-over";
   exportCtx.drawImage(
     tempCanvas,
     layout.x * scaleFactor,
@@ -2424,16 +2412,9 @@ async function renderPdfPageToExportCanvas(exportCanvas, exportCtx, doc, pageNum
     layout.height * scaleFactor
   );
 
-  const pageStrokes = strokes.filter((stroke) => {
-    return (
-      stroke.materialId === currentMaterial.id &&
-      Number(stroke.pageNumber || 1) === pageNumber
-    );
-  });
-
-  for (const stroke of pageStrokes) {
-    await drawStrokeOnExportWithScale(exportCtx, stroke, scaleFactor);
-  }
+  exportCtx.fillStyle = "#ffffff";
+  exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  exportCtx.restore();
 }
 
 exportAnnotatedPdfBtn.addEventListener("click", async () => {
