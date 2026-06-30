@@ -305,6 +305,8 @@ function updateCamera() {
   updateZoomLabel();
   positionMaterialLayer();
   positionActiveTextEditor();
+
+  updateDynamicCursor();
 }
 
 function fitView() {
@@ -451,6 +453,37 @@ function setTool(nextTool) {
   updateToolUI();
 }
 
+function updateDynamicCursor() {
+  if (!["pen", "eraser", "highlighter", "line", "rect", "circle"].includes(tool)) {
+    canvas.style.cursor = ""; 
+    return;
+  }
+
+  const currentSize = getActiveStrokeSize() * scale;
+  const isEraser = tool === "eraser";
+  const strokeColor = isEraser ? "#000000" : getActiveStrokeColor();
+  
+  const svgSize = currentSize + 4; 
+  const center = svgSize / 2;
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${svgSize}" height="${svgSize}" viewBox="0 0 ${svgSize} ${svgSize}">
+      <circle 
+        cx="${center}" 
+        cy="${center}" 
+        r="${currentSize / 2}" 
+        fill="${isEraser ? 'none' : strokeColor}" 
+        fill-opacity="${isEraser ? '0' : '0.5'}" 
+        stroke="${isEraser ? '#000000' : '#ffffff'}" 
+        stroke-width="1.5" 
+      />
+    </svg>
+  `;
+
+  const encoded = btoa(svg);
+  canvas.style.cursor = `url('data:image/svg+xml;base64,${encoded}') ${center} ${center}, crosshair`;
+}
+
 function updateToolUI() {
   const buttons = [
     [panTool, "pan"],
@@ -484,8 +517,6 @@ function updateToolUI() {
 
   canvas.classList.toggle("pan-cursor", tool === "pan");
   canvas.classList.toggle("select-cursor", tool === "select");
-  canvas.classList.toggle("eraser-cursor", tool === "eraser");
-  canvas.classList.toggle("highlighter-cursor", tool === "highlighter");
   canvas.classList.toggle("text-cursor", tool === "text");
   canvas.classList.toggle("image-cursor", tool === "image");
   canvas.classList.toggle("material-cursor", tool === "material");
@@ -505,6 +536,7 @@ function updateToolUI() {
   };
 
   setStatus(label[tool] || "Ready");
+  updateDynamicCursor();
 }
 
 function updateTeacherControls() {
@@ -2248,11 +2280,13 @@ fitViewBtn.addEventListener("click", () => fitView());
 
 colorPicker.addEventListener("input", (event) => {
   color = event.target.value;
+  updateDynamicCursor();
 });
 
 sizeSlider.addEventListener("input", (event) => {
   size = Number(event.target.value);
   sizeLabel.textContent = size;
+  updateDynamicCursor();
 });
 
 undoBtn.addEventListener("click", () => {

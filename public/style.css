@@ -155,14 +155,6 @@ canvas.pan-cursor:active {
   cursor: grabbing;
 }
 
-canvas.eraser-cursor {
-  cursor: cell;
-}
-
-canvas.highlighter-cursor {
-  cursor: crosshair;
-}
-
 canvas.text-cursor {
   cursor: text;
 }
