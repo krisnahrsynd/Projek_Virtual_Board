@@ -95,8 +95,9 @@ const DEFAULT_STUDENT_COLOR = "#2563eb";
 const HIGHLIGHTER_COLOR = "#facc15";
 const HIGHLIGHTER_OPACITY = 0.35;
 
-const CURSOR_INTERVAL = 35;
-const STROKE_PROGRESS_INTERVAL = 18;
+// OPTIMASI: Interval dinaikkan untuk mengurangi beban server
+const CURSOR_INTERVAL = 50; 
+const STROKE_PROGRESS_INTERVAL = 40; 
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 5;
@@ -1929,15 +1930,17 @@ function startFreehandStroke(pointerId, pos) {
   emitStrokeProgress(activeStrokes[pointerId], true);
 }
 
+// OPTIMASI: Function ini dikembalikan menjadi tipe boolean untuk pengecekan local render
 function addFreehandPoint(pointerId, pos) {
   const stroke = activeStrokes[pointerId];
-  if (!stroke) return;
+  if (!stroke) return false;
 
   const lastPoint = stroke.points[stroke.points.length - 1];
 
-  if (distance(lastPoint, pos) < 0.7) return;
+  if (distance(lastPoint, pos) < 0.7) return false;
 
   stroke.points.push(pos);
+  return true;
 }
 
 function finishFreehandStroke(pointerId) {
@@ -2156,11 +2159,14 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
 
-  addFreehandPoint(event.pointerId, pos);
+  // OPTIMASI: Hanya memanggil Redraw jika titik coretan benar-benar bertambah (lolos filter jarak piksel)
+  const isPointAdded = addFreehandPoint(event.pointerId, pos);
 
   if (activeStrokes[event.pointerId]) emitStrokeProgress(activeStrokes[event.pointerId]);
 
-  requestRedraw();
+  if (isPointAdded) {
+    requestRedraw();
+  }
 });
 
 canvas.addEventListener("pointerup", stopPointer);
@@ -2745,8 +2751,9 @@ socket.on("room-users", (users) => {
   });
 });
 
+// OPTIMASI: Memberi timestamp pada data kursor agar bisa dihapus oleh Garbage Collector
 socket.on("cursor-move", (cursor) => {
-  remoteCursors[cursor.id] = cursor;
+  remoteCursors[cursor.id] = { ...cursor, timestamp: Date.now() };
   requestRedraw();
 });
 
@@ -2773,3 +2780,19 @@ updateSplitUI();
 updateLockUI();
 resizeCanvas();
 renderMaterialList();
+
+// OPTIMASI: Pembersih otomatis (Garbage Collector) untuk kursor yang terputus (stuck) dari server
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  
+  Object.keys(remoteCursors).forEach((id) => {
+    // Jika tidak ada update dalam 5 detik, anggap kursor / user tersebut disconnect paksa
+    if (now - remoteCursors[id].timestamp > 5000) {
+      delete remoteCursors[id];
+      changed = true;
+    }
+  });
+
+  if (changed) requestRedraw();
+}, 2000);

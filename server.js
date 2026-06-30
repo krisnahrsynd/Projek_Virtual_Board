@@ -1297,7 +1297,8 @@ io.on("connection", (socket) => {
 
     const stroke = normalizeStroke(socket, rawStroke);
 
-    socket.to(roomId).emit("stroke-progress", stroke);
+    // OPTIMASI: Menggunakan .volatile() agar buffer memory server tidak meluap
+    socket.volatile.to(roomId).emit("stroke-progress", stroke);
   });
 
   socket.on("stroke-cancel", (data = {}) => {
@@ -1539,7 +1540,8 @@ io.on("connection", (socket) => {
 
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
-    socket.to(roomId).emit("cursor-move", {
+    // OPTIMASI: Menggunakan .volatile() agar buffer memory server tidak meluap
+    socket.volatile.to(roomId).emit("cursor-move", {
       id: socket.id,
       username: socket.username,
       role: socket.role,
